@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Caterpillar Moderation</title>
+<style>
+  :root { --green:#2e7d32; --amber:#ffbf00; --bg:#0a1f0d; --card:#132b17; }
+  * { box-sizing:border-box; font-family:-apple-system,system-ui,sans-serif; }
+  body { margin:0; background:var(--bg); color:#eee; }
+  header { padding:14px 20px; background:var(--card); display:flex;
+           align-items:center; gap:12px; }
+  header h1 { font-size:17px; margin:0; color:#9ccc65; flex:1; }
+  main { padding:16px; max-width:1200px; margin:0 auto; }
+  .tabs button { background:none; border:1px solid #345; color:#bbb;
+    padding:7px 14px; border-radius:16px; margin-right:6px; cursor:pointer; }
+  .tabs button.active { background:var(--green); color:#fff; border-color:var(--green); }
+  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }
+  th, td { padding:7px 8px; border-bottom:1px solid #234; text-align:left; }
+  th { color:#9ccc65; font-size:11px; text-transform:uppercase; }
+  td input { width:64px; background:#0e2412; border:1px solid #345;
+             color:#fff; border-radius:6px; padding:4px; }
+  td input.wide { width:150px; }
+  .approve { background:var(--green); } .reject { background:#8b3a3a; }
+  .approve, .reject { border:none; color:#fff; border-radius:8px;
+                      padding:5px 10px; cursor:pointer; margin:1px; }
+  .status-pending  { color:var(--amber); }
+  .status-approved { color:#81c784; }
+  .status-rejected { color:#e57373; }
+  #login { max-width:340px; margin:120px auto; background:var(--card);
+           padding:26px; border-radius:16px; }
+  #login input { width:100%; margin:6px 0; padding:10px; border-radius:8px;
+                 border:1px solid #345; background:#0e2412; color:#fff; }
+  #login button { width:100%; padding:11px; margin-top:10px; border:none;
+                  border-radius:8px; background:var(--green); color:#fff;
+                  font-weight:700; cursor:pointer; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:10px;
+          background:#234; }
+  #msg { color:var(--amber); font-size:12px; }
+  .csv { background:none; border:1px solid #567; color:#9ccc65;
+         border-radius:8px; padding:6px 12px; cursor:pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐛 Caterpillar Moderation</h1>
+  <span id="refreshed" class="pill"></span>
+  <button class="csv" onclick="exportCSV()">Export CSV</button>
+  <button class="csv" onclick="logout()" id="logoutBtn" style="display:none">Log out</button>
+</header>
+
+<div id="login">
+  <h2 style="margin-top:0">Sign in</h2>
+  <input id="email" type="email" placeholder="Email" autocomplete="username">
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+  <button onclick="login()">Sign in</button>
+  <p id="msg"></p>
+</div>
+
+<main id="app" style="display:none">
+  <div class="tabs">
+    <button data-tab="moderation_ai_candidates" class="active">AI Candidates</button>
+    <button data-tab="moderation_submissions">Submissions &amp; Corrections</button>
+    <button data-tab="moderation_food_requests">Food Requests</button>
+    <button data-tab="moderation_barcode_triage">Barcode Failures</button>
+  </div>
+  <div id="content"></div>
+</main>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+const SUPABASE_URL = "https://jkxxqojfualdmsvyaprz.supabase.co";
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpreHhxb2pmdWFsZG1zdnlhcHJ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MDg2NDcsImV4cCI6MjA5MTk4NDY0N30.xN4-oo8YagLnrOjD0IhliEN_2GdYYTLhpQzHCkrVnU0";
+const sb = createClient(SUPABASE_URL, ANON_KEY);
+
+let currentTab = "moderation_ai_candidates";
+let rows = [];
+
+window.login = async () => {
+  const { error } = await sb.auth.signInWithPassword({
+    email: document.getElementById("email").value,
+    password: document.getElementById("password").value,
+  });
+  document.getElementById("msg").textContent = error ? error.message : "";
+  if (!error) showApp();
+};
+window.logout = async () => { await sb.auth.signOut(); location.reload(); };
+
+async function showApp() {
+  document.getElementById("login").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("logoutBtn").style.display = "inline-block";
+  await load();
+  setInterval(load, 60 * 60 * 1000);   // hourly refresh
+}
+
+document.querySelectorAll(".tabs button").forEach((b) =>
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".tabs button").forEach((x) =>
+      x.classList.remove("active"));
+    b.classList.add("active");
+    currentTab = b.dataset.tab;
+    load();
+  }));
+
+async function load() {
+  const { data, error } = await sb.from(currentTab).select("*")
+    .order(currentTab === "moderation_ai_candidates"
+      ? "selection_count" : "created_at", { ascending: false })
+    .limit(500);
+  if (error) { document.getElementById("content").textContent = error.message; return; }
+  rows = data ?? [];
+  document.getElementById("refreshed").textContent =
+    "updated " + new Date().toLocaleTimeString();
+  render();
+}
+
+const editable = ["calories", "protein", "carbs", "fat", "fibre",
+                  "serving_size", "caffeine_mg", "name", "brand", "food_name"];
+
+function render() {
+  if (!rows.length) {
+    document.getElementById("content").innerHTML =
+      "<p style='color:#9ccc65'>Nothing pending — go touch grass 🌿</p>";
+    return;
+  }
+  const cols = Object.keys(rows[0]).filter((c) =>
+    !["label_photo_b64", "raw_response", "submitter_id"].includes(c));
+  let html = "<table><tr>" + cols.map((c) => `<th>${c}</th>`).join("")
+    + "<th>actions</th></tr>";
+  for (const r of rows) {
+    html += "<tr>" + cols.map((c) => {
+      const v = r[c] ?? "";
+      if (editable.includes(c)) {
+        const wide = ["name", "brand", "food_name"].includes(c) ? "wide" : "";
+        return `<td><input class="${wide}" data-id="${r.id}" data-col="${c}" value="${String(v).replace(/"/g, "&quot;")}"></td>`;
+      }
+      if (c.includes("status")) return `<td class="status-${v}">${v}</td>`;
+      return `<td>${typeof v === "string" && v.length > 40 ? v.slice(0, 40) + "…" : v}</td>`;
+    }).join("");
+    const statusCol = "approval_status" in r ? "approval_status" : "status";
+    html += `<td>
+      <button class="approve" onclick="setStatus('${r.id}','approved')">✓</button>
+      <button class="reject" onclick="setStatus('${r.id}','rejected')">✗</button>
+    </td></tr>`;
+  }
+  html += "</table><p style='color:#789;font-size:12px'>Edit any field, then "
+    + "approve — edits save with the approval and flow back into Caterpillar.</p>";
+  document.getElementById("content").innerHTML = html;
+}
+
+window.setStatus = async (id, status) => {
+  const patch = {};
+  document.querySelectorAll(`input[data-id="${id}"]`).forEach((i) => {
+    patch[i.dataset.col] = isNaN(Number(i.value)) || i.value === ""
+      ? i.value : Number(i.value);
+  });
+  const statusCol = currentTab === "moderation_ai_candidates"
+    ? "approval_status" : "status";
+  patch[statusCol] = status;
+  const { error } = await sb.from(currentTab).update(patch).eq("id", id);
+  if (error) alert(error.message); else load();
+};
+
+window.exportCSV = () => {
+  if (!rows.length) return;
+  const cols = Object.keys(rows[0]);
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [cols.join(",")]
+    .concat(rows.map((r) => cols.map((c) => esc(r[c])).join(",")))
+    .join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `caterpillar-${currentTab}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+};
+
+// Restore session on reload
+const { data: { session } } = await sb.auth.getSession();
+if (session) showApp();
+</script>
+</body>
+</html>
