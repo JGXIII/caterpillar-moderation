@@ -23,7 +23,8 @@
              color:#fff; border-radius:6px; padding:4px; }
   td input.wide { width:150px; }
   .approve { background:var(--green); } .reject { background:#8b3a3a; }
-  .approve, .reject { border:none; color:#fff; border-radius:8px;
+  .del { background:#334; }
+  .approve, .reject, .del { border:none; color:#fff; border-radius:8px;
                       padding:5px 10px; cursor:pointer; margin:1px; }
   .status-pending  { color:var(--amber); }
   .status-approved { color:#81c784; }
@@ -140,27 +141,46 @@ function render() {
       if (c.includes("status")) return `<td class="status-${v}">${v}</td>`;
       return `<td>${typeof v === "string" && v.length > 40 ? v.slice(0, 40) + "…" : v}</td>`;
     }).join("");
-    const statusCol = "approval_status" in r ? "approval_status" : "status";
     html += `<td>
       <button class="approve" onclick="setStatus('${r.id}','approved')">✓</button>
       <button class="reject" onclick="setStatus('${r.id}','rejected')">✗</button>
+      <button class="del" onclick="deleteRow('${r.id}')">🗑</button>
     </td></tr>`;
   }
   html += "</table><p style='color:#789;font-size:12px'>Edit any field, then "
-    + "approve — edits save with the approval and flow back into Caterpillar.</p>";
+    + "approve — edits save with the approval and flow back into Caterpillar. "
+    + "🗑 removes a row permanently.</p>";
   document.getElementById("content").innerHTML = html;
 }
+
+// Numeric columns: an empty box must become NULL, never "" — Postgres
+// rejects "" for a double precision column.
+const numericCols = new Set(["calories", "protein", "carbs", "fat", "fibre",
+  "serving_size", "caffeine_mg", "ai_confidence", "times_suggested",
+  "selection_count", "request_count", "displayed_calories"]);
 
 window.setStatus = async (id, status) => {
   const patch = {};
   document.querySelectorAll(`input[data-id="${id}"]`).forEach((i) => {
-    patch[i.dataset.col] = isNaN(Number(i.value)) || i.value === ""
-      ? i.value : Number(i.value);
+    const raw = i.value.trim();
+    if (raw === "") {
+      // Leave numeric blanks as NULL; skip blank text so we never wipe it
+      if (numericCols.has(i.dataset.col)) patch[i.dataset.col] = null;
+      return;
+    }
+    patch[i.dataset.col] = numericCols.has(i.dataset.col)
+      ? Number(raw) : raw;
   });
   const statusCol = currentTab === "moderation_ai_candidates"
     ? "approval_status" : "status";
   patch[statusCol] = status;
   const { error } = await sb.from(currentTab).update(patch).eq("id", id);
+  if (error) alert(error.message); else load();
+};
+
+window.deleteRow = async (id) => {
+  if (!confirm("Delete this row permanently?")) return;
+  const { error } = await sb.from(currentTab).delete().eq("id", id);
   if (error) alert(error.message); else load();
 };
 
