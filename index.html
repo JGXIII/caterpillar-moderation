@@ -78,6 +78,7 @@ const sb = createClient(SUPABASE_URL, ANON_KEY);
 
 let currentTab = "moderation_ai_candidates";
 let rows = [];
+let reachById = {};   // candidate_id -> { reached_devices, active_devices }
 
 window.login = async () => {
   const { error } = await sb.auth.signInWithPassword({
@@ -113,6 +114,15 @@ async function load() {
     .limit(500);
   if (error) { document.getElementById("content").textContent = error.message; return; }
   rows = data ?? [];
+
+  // Reach: % of devices active in the last 7 days that have received each
+  // approved item. Only meaningful for the AI Candidates tab.
+  reachById = {};
+  if (currentTab === "moderation_ai_candidates") {
+    const { data: reach } = await sb.from("moderation_candidate_reach").select("*");
+    for (const r of reach ?? []) reachById[r.candidate_id] = r;
+  }
+
   document.getElementById("refreshed").textContent =
     "updated " + new Date().toLocaleTimeString();
   render();
@@ -129,8 +139,9 @@ function render() {
   }
   const cols = Object.keys(rows[0]).filter((c) =>
     !["label_photo_b64", "raw_response", "submitter_id"].includes(c));
+  const showReach = currentTab === "moderation_ai_candidates";
   let html = "<table><tr>" + cols.map((c) => `<th>${c}</th>`).join("")
-    + "<th>actions</th></tr>";
+    + (showReach ? "<th>reach (7d)</th>" : "") + "<th>actions</th></tr>";
   for (const r of rows) {
     html += "<tr>" + cols.map((c) => {
       const v = r[c] ?? "";
@@ -141,6 +152,9 @@ function render() {
       if (c.includes("status")) return `<td class="status-${v}">${v}</td>`;
       return `<td>${typeof v === "string" && v.length > 40 ? v.slice(0, 40) + "…" : v}</td>`;
     }).join("");
+    if (showReach) {
+      html += `<td>${reachCell(r)}</td>`;
+    }
     html += `<td>
       <button class="approve" onclick="setStatus('${r.id}','approved')">✓</button>
       <button class="reject" onclick="setStatus('${r.id}','rejected')">✗</button>
@@ -149,8 +163,20 @@ function render() {
   }
   html += "</table><p style='color:#789;font-size:12px'>Edit any field, then "
     + "approve — edits save with the approval and flow back into Caterpillar. "
-    + "🗑 removes a row permanently.</p>";
+    + "🗑 removes a row permanently."
+    + (showReach ? " \"Reach\" = devices active in the last 7 days that "
+       + "have pulled this approval." : "") + "</p>";
   document.getElementById("content").innerHTML = html;
+}
+
+// "42/58 (72%)" for an approved item with reach data; "—" for anything not
+// yet approved (0% would misleadingly read as "nobody wants this").
+function reachCell(r) {
+  if (r.approval_status !== "approved") return "—";
+  const stats = reachById[r.id];
+  if (!stats || stats.active_devices === 0) return "0/0";
+  const pct = Math.round(100 * stats.reached_devices / stats.active_devices);
+  return `${stats.reached_devices}/${stats.active_devices} (${pct}%)`;
 }
 
 // Numeric columns: an empty box must become NULL, never "" — Postgres
