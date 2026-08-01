@@ -132,10 +132,18 @@ async function permissionsLookBroken() {
 }
 
 async function load() {
-  const { data, error } = await sb.from(currentTab).select("*")
-    .order(currentTab === "moderation_ai_candidates"
-      ? "selection_count" : "created_at", { ascending: false })
-    .limit(500);
+  // AI candidates sort by CONFIDENCE, highest first. Scored against 27 real
+  // decisions, ai_confidence turned out not to predict approval well enough
+  // to auto-approve on (33-44% error at every threshold from 0.6 to 0.9) —
+  // but it's still the best available ordering, so review time goes to the
+  // most likely keepers first. selection_count breaks ties: a candidate a
+  // user actually picked is the strongest signal there is.
+  let q = sb.from(currentTab).select("*");
+  q = currentTab === "moderation_ai_candidates"
+    ? q.order("ai_confidence", { ascending: false })
+       .order("selection_count", { ascending: false })
+    : q.order("created_at", { ascending: false });
+  const { data, error } = await q.limit(500);
   if (error) { document.getElementById("content").textContent = error.message; return; }
   rows = data ?? [];
 
