@@ -97,7 +97,7 @@ async function showApp() {
   document.getElementById("app").style.display = "block";
   document.getElementById("logoutBtn").style.display = "inline-block";
   await load();
-  setInterval(load, 60 * 60 * 1000);   // hourly refresh
+  setInterval(load, 60 * 1000);   // once a minute — it used to be hourly
 }
 
 document.querySelectorAll(".tabs button").forEach((b) =>
@@ -108,6 +108,28 @@ document.querySelectorAll(".tabs button").forEach((b) =>
     currentTab = b.dataset.tab;
     load();
   }));
+
+// A second client using the ANON key. moderation_ai_candidates grants anon
+// SELECT, so if anon can see rows the signed-in session cannot, that is
+// definitively an RLS problem on the authenticated role — not an empty queue.
+// This exists because that exact failure hid for two weeks behind a cheerful
+// "Nothing pending" (the dashboard could not read ANY table from 19 July,
+// while 64 candidates piled up).
+const probe = createClient(SUPABASE_URL, ANON_KEY);
+
+async function permissionsLookBroken() {
+  try {
+    const { count, error } = await probe
+      .from("moderation_ai_candidates")
+      .select("id", { count: "exact", head: true });
+    if (error) return false;
+    if (!count) return false;
+    const { count: mine } = await sb
+      .from("moderation_ai_candidates")
+      .select("id", { count: "exact", head: true });
+    return (mine ?? 0) === 0;
+  } catch { return false; }
+}
 
 async function load() {
   const { data, error } = await sb.from(currentTab).select("*")
@@ -126,7 +148,8 @@ async function load() {
   }
 
   document.getElementById("refreshed").textContent =
-    "updated " + new Date().toLocaleTimeString();
+    `${rows.length} row${rows.length === 1 ? "" : "s"} · updated `
+    + new Date().toLocaleTimeString();
   render();
 }
 
@@ -144,6 +167,22 @@ function render() {
     document.getElementById("content").innerHTML = readOnly
       ? "<p style='color:#9ccc65'>No verified foods yet — they appear as users scan nutrition labels.</p>"
       : "<p style='color:#9ccc65'>Nothing pending — go touch grass 🌿</p>";
+    // …unless it isn't empty at all. Verify before believing it.
+    permissionsLookBroken().then((broken) => {
+      if (!broken || rows.length) return;
+      document.getElementById("content").innerHTML =
+        "<div style='background:#5a1d1d;border:1px solid #ff8a80;border-radius:10px;" +
+        "padding:16px;color:#ffcdd2;max-width:720px'>" +
+        "<strong>This dashboard cannot read the database.</strong><br><br>" +
+        "The tables are NOT empty — an anonymous client can see rows that " +
+        "your signed-in session cannot. That means the row-level security " +
+        "policies for the <code>authenticated</code> role are missing or " +
+        "wrong.<br><br>" +
+        "A blocked SELECT returns an empty result rather than an error, which " +
+        "is why this looks like an empty queue.<br><br>" +
+        "Fix: re-apply <code>supabase/migrations/20260801_moderation_dashboard_read.sql</code> " +
+        "with <code>supabase db push</code>.</div>";
+    });
     return;
   }
   const cols = Object.keys(rows[0]).filter((c) =>
