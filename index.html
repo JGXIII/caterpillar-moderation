@@ -5,49 +5,137 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Caterpillar Moderation</title>
+<!--
+  ── WHY CARDS AND NOT A TABLE ──
+  This was a generic dump of every database column into one wide table. On a
+  phone it needed scrolling in both directions at once: sideways to reach the
+  macros, then back up to the header to remember whether the column you were
+  looking at was fat or fibre, then back down to find the row again. Deciding
+  "is this product right?" took a dozen gestures.
+
+  Every row is now a self-contained card. Each value carries its own label, so
+  nothing depends on a header that has scrolled off. Nothing scrolls
+  horizontally, ever. The photos the values were read from sit at the top of
+  the card, because a nutrition panel is checkable in a glance and a table of
+  numbers is not.
+
+  ── WHY THE BASIS TOGGLE ──
+  Corrections are STORED per 100 g (that's the app's internal basis) but the
+  serving size comes across as-is. The dashboard showed both side by side with
+  no labels, so a 54 g serving sat next to per-100 g macros and read as one
+  set of figures for that serving — which is wrong by whatever factor the
+  serving happens to be. The basis is now stated on every card, and the
+  toggle converts the whole card at once so you can read it in the same terms
+  the packet uses.
+-->
 <style>
-  :root { --green:#2e7d32; --amber:#ffbf00; --bg:#0a1f0d; --card:#132b17; }
-  * { box-sizing:border-box; font-family:-apple-system,system-ui,sans-serif; }
-  body { margin:0; background:var(--bg); color:#eee; }
-  header { padding:14px 20px; background:var(--card); display:flex;
-           align-items:center; gap:12px; }
-  header h1 { font-size:17px; margin:0; color:#9ccc65; flex:1; }
-  main { padding:16px; max-width:1200px; margin:0 auto; }
-  .tabs button { background:none; border:1px solid #345; color:#bbb;
-    padding:7px 14px; border-radius:16px; margin-right:6px; cursor:pointer; }
-  .tabs button.active { background:var(--green); color:#fff; border-color:var(--green); }
-  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }
-  th, td { padding:7px 8px; border-bottom:1px solid #234; text-align:left; }
-  th { color:#9ccc65; font-size:11px; text-transform:uppercase; }
-  td input { width:64px; background:#0e2412; border:1px solid #345;
-             color:#fff; border-radius:6px; padding:4px; }
-  td input.wide { width:150px; }
+  :root {
+    --green:#2e7d32; --green-lt:#9ccc65; --amber:#ffbf00;
+    --bg:#0a1f0d; --card:#132b17; --line:#20422a; --dim:#8aa891;
+    --radius:14px;
+  }
+  * { box-sizing:border-box; -webkit-text-size-adjust:100%; }
+  html, body { overflow-x:hidden; }
+  body { margin:0; background:var(--bg); color:#eee;
+         font:15px/1.45 -apple-system,system-ui,sans-serif; }
+
+  header { position:sticky; top:0; z-index:20; padding:10px 14px;
+           background:var(--card); border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; color:var(--green-lt); flex:1;
+              white-space:nowrap; }
+  main { padding:12px; max-width:760px; margin:0 auto; }
+
+  /* Tabs scroll sideways on their own; the PAGE never does. */
+  .tabs { display:flex; gap:6px; overflow-x:auto; padding:10px 12px 2px;
+          max-width:760px; margin:0 auto; scrollbar-width:none; }
+  .tabs::-webkit-scrollbar { display:none; }
+  .tabs button { flex:0 0 auto; background:none; border:1px solid #345;
+    color:#bbb; padding:8px 14px; border-radius:18px; cursor:pointer;
+    font-size:14px; white-space:nowrap; }
+  .tabs button.active { background:var(--green); color:#fff;
+    border-color:var(--green); font-weight:600; }
+  .tabs .count { opacity:.75; font-size:12px; margin-left:4px; }
+
+  .card { background:var(--card); border:1px solid var(--line);
+          border-radius:var(--radius); padding:14px; margin-bottom:14px; }
+  .card h2 { margin:0; font-size:17px; line-height:1.25; }
+  .sub { color:var(--dim); font-size:13px; margin-top:2px;
+         overflow-wrap:anywhere; }
+
+  /* Photos: the whole point of the rebuild. Tap to see full size. */
+  .shots { display:flex; gap:8px; overflow-x:auto; margin:-2px 0 12px;
+           padding-bottom:4px; }
+  .shots img { height:120px; width:auto; border-radius:10px;
+               border:1px solid var(--line); cursor:zoom-in; flex:0 0 auto;
+               background:#000; }
+  .noshots { color:var(--dim); font-size:12px; font-style:italic;
+             margin-bottom:10px; }
+
+  /* Every field labelled, so nothing depends on a header row. */
+  .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr));
+            gap:8px; margin:12px 0; }
+  .f { background:#0e2412; border:1px solid var(--line); border-radius:10px;
+       padding:7px 9px; min-width:0; }
+  .f label { display:block; font-size:10.5px; letter-spacing:.06em;
+             text-transform:uppercase; color:var(--green-lt); margin-bottom:3px; }
+  .f input { width:100%; background:none; border:none; color:#fff;
+             font-size:16px; font-weight:600; padding:0; min-width:0; }
+  .f input:focus { outline:none; }
+  .f .ro { font-size:15px; font-weight:600; overflow-wrap:anywhere; }
+  .f.full { grid-column:1/-1; }
+
+  .basis { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+           margin:10px 0 2px; font-size:12.5px; color:var(--dim); }
+  .basis .seg { display:inline-flex; border:1px solid #345; border-radius:9px;
+                overflow:hidden; }
+  .basis .seg button { background:none; border:none; color:#bbb;
+    padding:6px 11px; font-size:12.5px; cursor:pointer; }
+  .basis .seg button.on { background:var(--green); color:#fff; font-weight:600; }
+
+  .acts { display:flex; gap:8px; margin-top:12px; }
+  .acts button { flex:1; border:none; border-radius:10px; padding:12px 8px;
+    color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
   .approve { background:var(--green); } .reject { background:#8b3a3a; }
-  .del { background:#334; }
-  .approve, .reject, .del { border:none; color:#fff; border-radius:8px;
-                      padding:5px 10px; cursor:pointer; margin:1px; }
+  .del { background:#33404a; flex:0 0 56px !important; }
+
+  .badge { display:inline-block; font-size:11px; padding:3px 9px;
+           border-radius:11px; background:#20422a; color:var(--green-lt);
+           margin:2px 4px 0 0; white-space:nowrap; }
+  .badge.warn { background:#5a4a10; color:#ffd75e; }
+  .badge.bad  { background:#5a1d1d; color:#ffb4b4; }
   .status-pending  { color:var(--amber); }
   .status-approved { color:#81c784; }
   .status-rejected { color:#e57373; }
-  #login { max-width:340px; margin:120px auto; background:var(--card);
+
+  #login { max-width:340px; margin:100px auto; background:var(--card);
            padding:26px; border-radius:16px; }
-  #login input { width:100%; margin:6px 0; padding:10px; border-radius:8px;
-                 border:1px solid #345; background:#0e2412; color:#fff; }
-  #login button { width:100%; padding:11px; margin-top:10px; border:none;
+  #login input { width:100%; margin:6px 0; padding:12px; border-radius:8px;
+                 border:1px solid #345; background:#0e2412; color:#fff;
+                 font-size:16px; }
+  #login button { width:100%; padding:13px; margin-top:10px; border:none;
                   border-radius:8px; background:var(--green); color:#fff;
-                  font-weight:700; cursor:pointer; }
-  .pill { font-size:11px; padding:2px 8px; border-radius:10px;
-          background:#234; }
-  #msg { color:var(--amber); font-size:12px; }
-  .csv { background:none; border:1px solid #567; color:#9ccc65;
-         border-radius:8px; padding:6px 12px; cursor:pointer; }
+                  font-weight:700; font-size:16px; cursor:pointer; }
+  #msg { color:var(--amber); font-size:13px; }
+  .pill { font-size:11px; padding:3px 9px; border-radius:10px; background:#234;
+          color:var(--dim); }
+  .csv { background:none; border:1px solid #567; color:var(--green-lt);
+         border-radius:8px; padding:7px 12px; cursor:pointer; font-size:13px; }
+  .empty { color:var(--green-lt); text-align:center; padding:40px 10px; }
+  .note { color:#789; font-size:12px; margin:6px 2px 20px; }
+
+  /* Full-size photo viewer */
+  #lightbox { position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:50;
+              display:none; align-items:center; justify-content:center;
+              padding:16px; cursor:zoom-out; }
+  #lightbox img { max-width:100%; max-height:100%; border-radius:8px; }
 </style>
 </head>
 <body>
 <header>
   <h1>🐛 Caterpillar Moderation</h1>
   <span id="refreshed" class="pill"></span>
-  <button class="csv" onclick="exportCSV()">Export CSV</button>
+  <button class="csv" onclick="exportCSV()">CSV</button>
   <button class="csv" onclick="logout()" id="logoutBtn" style="display:none">Log out</button>
 </header>
 
@@ -59,17 +147,12 @@
   <p id="msg"></p>
 </div>
 
-<main id="app" style="display:none">
-  <div class="tabs">
-    <button data-tab="verified_foods" class="active">Verified Foods</button>
-    <button data-tab="moderation_ai_candidates">AI Candidates</button>
-    <button data-tab="moderation_submissions">Submissions &amp; Corrections</button>
-    <button data-tab="moderation_food_requests">Food Requests</button>
-    <button data-tab="moderation_barcode_triage">Barcode Failures</button>
-    <button data-tab="account_deletion_requests">Deletion Requests</button>
-  </div>
-  <div id="content"></div>
-</main>
+<div id="app" style="display:none">
+  <div class="tabs" id="tabs"></div>
+  <main><div id="content"></div></main>
+</div>
+
+<div id="lightbox" onclick="this.style.display='none'"><img id="lightboxImg" alt=""></div>
 
 <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -78,9 +161,21 @@ const SUPABASE_URL = "https://jkxxqojfualdmsvyaprz.supabase.co";
 const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpreHhxb2pmdWFsZG1zdnlhcHJ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MDg2NDcsImV4cCI6MjA5MTk4NDY0N30.xN4-oo8YagLnrOjD0IhliEN_2GdYYTLhpQzHCkrVnU0";
 const sb = createClient(SUPABASE_URL, ANON_KEY);
 
-let currentTab = "verified_foods";
+const TABS = [
+  { id:"moderation_submissions",    label:"Corrections" },
+  { id:"moderation_ai_candidates",  label:"AI Candidates" },
+  { id:"verified_foods",            label:"Verified Foods" },
+  { id:"moderation_food_requests",  label:"Requests" },
+  { id:"moderation_barcode_triage", label:"Barcode Fails" },
+  { id:"account_deletion_requests", label:"Deletions" },
+];
+
+let currentTab = TABS[0].id;
 let rows = [];
-let reachById = {};   // candidate_id -> { reached_devices, active_devices }
+let reachById = {};
+// Per-card display basis: "100" (as stored) or "serving". Keyed by row id so
+// flipping one card doesn't disturb the others.
+const basisById = {};
 
 window.login = async () => {
   const { error } = await sb.auth.signInWithPassword({
@@ -92,29 +187,46 @@ window.login = async () => {
 };
 window.logout = async () => { await sb.auth.signOut(); location.reload(); };
 
+function buildTabs() {
+  document.getElementById("tabs").innerHTML = TABS.map((t) =>
+    `<button data-tab="${t.id}" class="${t.id === currentTab ? "active" : ""}">`
+    + `${t.label}<span class="count" id="count-${t.id}"></span></button>`).join("");
+  document.querySelectorAll(".tabs button").forEach((b) =>
+    b.addEventListener("click", () => {
+      currentTab = b.dataset.tab;
+      buildTabs();
+      load();
+    }));
+}
+
 async function showApp() {
   document.getElementById("login").style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("logoutBtn").style.display = "inline-block";
+  buildTabs();
   await load();
-  setInterval(load, 60 * 1000);   // once a minute — it used to be hourly
+  await refreshCounts();
+  setInterval(load, 60 * 1000);
+  setInterval(refreshCounts, 5 * 60 * 1000);
 }
 
-document.querySelectorAll(".tabs button").forEach((b) =>
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".tabs button").forEach((x) =>
-      x.classList.remove("active"));
-    b.classList.add("active");
-    currentTab = b.dataset.tab;
-    load();
-  }));
+// Pending counts on the tabs, so you can see where the work is without
+// opening every tab to find out it's empty.
+async function refreshCounts() {
+  for (const t of TABS) {
+    try {
+      const { count } = await sb.from(t.id)
+        .select("id", { count: "exact", head: true });
+      const el = document.getElementById(`count-${t.id}`);
+      if (el) el.textContent = count ? ` ${count}` : "";
+    } catch { /* a missing table just shows no count */ }
+  }
+}
 
-// A second client using the ANON key. moderation_ai_candidates grants anon
-// SELECT, so if anon can see rows the signed-in session cannot, that is
-// definitively an RLS problem on the authenticated role — not an empty queue.
-// This exists because that exact failure hid for two weeks behind a cheerful
-// "Nothing pending" (the dashboard could not read ANY table from 19 July,
-// while 64 candidates piled up).
+// A second client on the ANON key. moderation_ai_candidates grants anon
+// SELECT, so if anon sees rows the signed-in session cannot, that is
+// definitively an RLS problem — not an empty queue. This exists because that
+// exact failure hid for two weeks behind a cheerful "Nothing pending".
 const probe = createClient(SUPABASE_URL, ANON_KEY);
 
 async function permissionsLookBroken() {
@@ -122,8 +234,7 @@ async function permissionsLookBroken() {
     const { count, error } = await probe
       .from("moderation_ai_candidates")
       .select("id", { count: "exact", head: true });
-    if (error) return false;
-    if (!count) return false;
+    if (error || !count) return false;
     const { count: mine } = await sb
       .from("moderation_ai_candidates")
       .select("id", { count: "exact", head: true });
@@ -135,7 +246,7 @@ async function load() {
   // AI candidates sort by CONFIDENCE, highest first. Scored against 27 real
   // decisions, ai_confidence turned out not to predict approval well enough
   // to auto-approve on (33-44% error at every threshold from 0.6 to 0.9) —
-  // but it's still the best available ordering, so review time goes to the
+  // but it is still the best available ordering, so review time goes to the
   // most likely keepers first. selection_count breaks ties: a candidate a
   // user actually picked is the strongest signal there is.
   let q = sb.from(currentTab).select("*");
@@ -144,11 +255,13 @@ async function load() {
        .order("selection_count", { ascending: false })
     : q.order("created_at", { ascending: false });
   const { data, error } = await q.limit(500);
-  if (error) { document.getElementById("content").textContent = error.message; return; }
+  if (error) {
+    document.getElementById("content").innerHTML =
+      `<div class="card"><h2>Couldn't load</h2><p class="sub">${esc(error.message)}</p></div>`;
+    return;
+  }
   rows = data ?? [];
 
-  // Reach: % of devices active in the last 7 days that have received each
-  // approved item. Only meaningful for the AI Candidates tab.
   reachById = {};
   if (currentTab === "moderation_ai_candidates") {
     const { data: reach } = await sb.from("moderation_candidate_reach").select("*");
@@ -156,113 +269,335 @@ async function load() {
   }
 
   document.getElementById("refreshed").textContent =
-    `${rows.length} row${rows.length === 1 ? "" : "s"} · updated `
-    + new Date().toLocaleTimeString();
+    `${rows.length} · ${new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}`;
   render();
 }
 
-const editable = ["calories", "protein", "carbs", "fat", "fibre",
-                  "serving_size", "caffeine_mg", "name", "brand", "food_name"];
+// ── helpers ───────────────────────────────────────────────────────────────
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+const num = (v) => (v === null || v === undefined || v === "" ? null : Number(v));
+const fmt = (v, dp = 1) => {
+  const n = num(v);
+  if (n === null || Number.isNaN(n)) return "";
+  return Number.isInteger(n) ? String(n) : n.toFixed(dp).replace(/\.0$/, "");
+};
+
+const numericCols = new Set(["calories", "protein", "carbs", "fat", "fibre",
+  "serving_size", "caffeine_mg", "ai_confidence", "times_suggested",
+  "selection_count", "request_count", "displayed_calories", "serving_size_g",
+  "protein_g", "carbs_g", "fat_g", "fibre_g"]);
+
+/// Photos for a row, oldest schema first: `photos_b64` is the lineup,
+/// `label_photo_b64` the single legacy shot.
+function photosOf(r) {
+  const many = Array.isArray(r.photos_b64) ? r.photos_b64 : [];
+  if (many.length) return many;
+  return r.label_photo_b64 ? [r.label_photo_b64] : [];
+}
+
+function shotsHTML(r, expected) {
+  const p = photosOf(r);
+  if (!p.length) {
+    return expected
+      ? `<p class="noshots">No photo attached — this one was typed in, not scanned.</p>`
+      : "";
+  }
+  return `<div class="shots">` + p.map((b64) =>
+    `<img src="data:image/jpeg;base64,${b64}" alt="submitted photo" `
+    + `onclick="zoom(this.src)">`).join("") + `</div>`;
+}
+
+window.zoom = (src) => {
+  document.getElementById("lightboxImg").src = src;
+  document.getElementById("lightbox").style.display = "flex";
+};
+
+/// One labelled field. `col` makes it editable; omit it for read-only.
+function field(r, label, col, value, opts = {}) {
+  const cls = opts.full ? "f full" : "f";
+  if (!col) {
+    const v = value === "" || value === null || value === undefined ? "—" : value;
+    return `<div class="${cls}"><label>${esc(label)}</label>`
+      + `<div class="ro">${esc(v)}</div></div>`;
+  }
+  // data-orig is what was rendered. On save, a field still holding that value
+  // is left alone rather than converted back — displaying per-serving rounds
+  // to 1dp, and round-tripping an untouched 3.8 through ×0.16 and ÷0.16 would
+  // silently rewrite it as 3.75. Only edits should change stored data.
+  return `<div class="${cls}"><label>${esc(label)}</label>`
+    + `<input data-id="${esc(r.id)}" data-col="${esc(col)}" `
+    + `${opts.factor ? `data-factor="${opts.factor}"` : ""} `
+    + `data-orig="${esc(value ?? "")}" `
+    + `${numericCols.has(col) ? 'inputmode="decimal"' : ""} `
+    + `value="${esc(value ?? "")}"></div>`;
+}
+
+// ── basis ─────────────────────────────────────────────────────────────────
+// Corrections arrive with macros PER 100 g and a real serving size alongside
+// them. Showing both unlabelled made the macros look like they were for that
+// serving. The card states which basis it is in and converts on demand;
+// whatever you type is converted back to per-100 g on save, because that is
+// what the app stores and reads.
+function servingOf(r) {
+  const s = num(r.serving_size) ?? num(r.serving_size_g);
+  return s && s > 0 ? s : null;
+}
+
+function basisHTML(r) {
+  const serving = servingOf(r);
+  if (!serving) {
+    return `<div class="basis">Values are <strong>per 100 g/ml</strong>`
+      + ` — no serving size on this submission.</div>`;
+  }
+  const mode = basisById[r.id] ?? "100";
+  return `<div class="basis">Showing
+    <span class="seg">
+      <button class="${mode === "100" ? "on" : ""}" onclick="setBasis('${esc(r.id)}','100')">per 100 g</button>
+      <button class="${mode === "serving" ? "on" : ""}" onclick="setBasis('${esc(r.id)}','serving')">per serving (${fmt(serving)} g)</button>
+    </span>
+    ${mode === "serving" ? "converted for display — saved back per 100 g" : "as stored"}
+  </div>`;
+}
+
+window.setBasis = (id, mode) => { basisById[id] = mode; render(); };
+
+/// Multiplier from stored (per-100 g) values to what's on screen.
+function displayFactor(r) {
+  const serving = servingOf(r);
+  if (!serving || (basisById[r.id] ?? "100") === "100") return 1;
+  return serving / 100;
+}
+
+// ── cards ─────────────────────────────────────────────────────────────────
+function titleOf(r) {
+  const name = r.food_name || r.name || r.product_name || r.email
+    || r.barcode || "(unnamed)";
+  return r.flavour ? `${name} — ${r.flavour}` : name;
+}
+
+function macroFields(r, f) {
+  // f is the display factor; values are stored per 100 g.
+  const scale = (v) => {
+    const n = num(v);
+    return n === null ? "" : fmt(n * f);
+  };
+  const cals = r.calories !== undefined ? "calories" : null;
+  const prot = r.protein !== undefined ? "protein" : "protein_g";
+  const carb = r.carbs   !== undefined ? "carbs"   : "carbs_g";
+  const fat  = r.fat     !== undefined ? "fat"     : "fat_g";
+  const fib  = r.fibre   !== undefined ? "fibre"   : "fibre_g";
+  return [
+    field(r, "Calories", cals ?? "calories", scale(r[cals ?? "calories"]), { factor:f }),
+    field(r, "Protein g", prot, scale(r[prot]), { factor:f }),
+    field(r, "Carbs g",   carb, scale(r[carb]), { factor:f }),
+    field(r, "Fat g",     fat,  scale(r[fat]),  { factor:f }),
+    field(r, "Fibre g",   fib,  scale(r[fib]),  { factor:f }),
+  ].join("");
+}
+
+function actionsHTML(r) {
+  return `<div class="acts">
+    <button class="approve" onclick="setStatus('${esc(r.id)}','approved')">✓ Approve</button>
+    <button class="reject"  onclick="setStatus('${esc(r.id)}','rejected')">✗ Reject</button>
+    <button class="del"     onclick="deleteRow('${esc(r.id)}')" title="Delete">🗑</button>
+  </div>`;
+}
+
+function statusBadge(r) {
+  const s = r.approval_status ?? r.status;
+  if (!s) return "";
+  return `<span class="badge status-${esc(s)}">${esc(s)}</span>`;
+}
+
+function cardHTML(r) {
+  const f = displayFactor(r);
+  const serving = servingOf(r);
+  let body = "";
+
+  switch (currentTab) {
+    case "moderation_submissions": {
+      body = shotsHTML(r, true)
+        + `<h2>${esc(titleOf(r))}</h2>`
+        + `<div class="sub">${esc(r.brand || "no brand")}`
+        + (r.barcode ? ` · ${esc(r.barcode)}` : "")
+        + ` · ${esc(r.kind || "submission")}${r.country ? " · " + esc(r.country) : ""}</div>`
+        + `<div>${statusBadge(r)}</div>`
+        + basisHTML(r)
+        + `<div class="fields">`
+        + field(r, "Name", "food_name", r.food_name, { full:true })
+        + field(r, "Brand", "brand", r.brand)
+        + field(r, "Serving g", "serving_size", fmt(r.serving_size))
+        + macroFields(r, f)
+        + extrasFields(r, f)
+        + `</div>`
+        + actionsHTML(r);
+      break;
+    }
+    case "moderation_ai_candidates": {
+      const conf = num(r.ai_confidence);
+      const confClass = conf === null ? "" : conf >= 0.85 ? "" : conf >= 0.7 ? "warn" : "bad";
+      body = `<h2>${esc(titleOf(r))}</h2>`
+        + `<div class="sub">${esc(r.brand || "no brand")}`
+        + (r.barcode ? ` · ${esc(r.barcode)}` : "")
+        + (r.source_query ? ` · searched “${esc(r.source_query)}”` : "") + `</div>`
+        + `<div>${statusBadge(r)}`
+        + (conf === null ? "" : `<span class="badge ${confClass}">confidence ${(conf * 100).toFixed(0)}%</span>`)
+        + (r.selection_count ? `<span class="badge">picked ${r.selection_count}×</span>` : "")
+        + (r.times_suggested ? `<span class="badge">shown ${r.times_suggested}×</span>` : "")
+        + (r.approval_status === "approved" ? `<span class="badge">reach ${reachCell(r)}</span>` : "")
+        + `</div>`
+        + basisHTML(r)
+        + `<div class="fields">`
+        + field(r, "Name", "name", r.name, { full:true })
+        + field(r, "Brand", "brand", r.brand)
+        + field(r, "Serving g", "serving_size", fmt(r.serving_size))
+        + macroFields(r, f)
+        + field(r, "Caffeine mg", "caffeine_mg", fmt(num(r.caffeine_mg) * f))
+        + `</div>`
+        + actionsHTML(r);
+      break;
+    }
+    case "verified_foods": {
+      const trust = r.trust_level || "bronze";
+      body = shotsHTML(r, false)
+        + `<h2>${esc(titleOf(r))}</h2>`
+        + `<div class="sub">${esc(r.brand || "no brand")}`
+        + (r.barcode ? ` · ${esc(r.barcode)}` : "") + `</div>`
+        + `<div><span class="badge">${esc(trust)}</span>`
+        + `<span class="badge">confirmed ${r.verification_count ?? 1}×</span>`
+        + (r.verification_basis ? `<span class="badge">verified by ${esc(r.verification_basis)}</span>` : "")
+        + (r.flagged_for_review ? `<span class="badge bad">conflict flagged</span>` : "")
+        + `</div>`
+        + `<div class="basis">Values are <strong>per serving`
+        + (serving ? ` (${fmt(serving)} g)` : "") + `</strong> — as printed on the label.</div>`
+        + `<div class="fields">`
+        + field(r, "Serving g", null, fmt(r.serving_size_g))
+        + field(r, "Calories", null, fmt(r.calories))
+        + field(r, "Protein g", null, fmt(r.protein_g))
+        + field(r, "Carbs g", null, fmt(r.carbs_g))
+        + field(r, "Fat g", null, fmt(r.fat_g))
+        + field(r, "Fibre g", null, fmt(r.fibre_g))
+        + `</div>`
+        + (r.conflict_note ? `<p class="note">${esc(r.conflict_note)}</p>` : "");
+      break;
+    }
+    case "moderation_food_requests": {
+      body = `<h2>${esc(titleOf(r))}</h2>`
+        + `<div class="sub">${esc(r.brand || "no brand")}`
+        + (r.barcode ? ` · ${esc(r.barcode)}` : "") + `</div>`
+        + `<div>${statusBadge(r)}`
+        + `<span class="badge">asked for ${r.request_count ?? 1}×</span></div>`
+        + actionsHTML(r);
+      break;
+    }
+    case "moderation_barcode_triage": {
+      body = `<h2>${esc(r.barcode || "(no barcode)")}</h2>`
+        + `<div class="sub">${esc(r.error_signature || "no error signature")}</div>`
+        + `<div class="fields">`
+        + field(r, "Shown as", null, fmt(r.displayed_calories) || "—")
+        + `</div>`
+        + (r.raw_response
+            ? `<p class="note">${esc(String(r.raw_response).slice(0, 300))}</p>` : "")
+        + `<div class="acts"><button class="del" style="flex:1 !important" `
+        + `onclick="deleteRow('${esc(r.id)}')">🗑 Delete</button></div>`;
+      break;
+    }
+    default: {
+      // Anything without a purpose-built card still shows every field,
+      // labelled — never a horizontally scrolling table.
+      body = `<h2>${esc(titleOf(r))}</h2><div class="fields">`
+        + Object.keys(r).filter((c) => !["photos_b64", "label_photo_b64"].includes(c))
+            .map((c) => field(r, c.replace(/_/g, " "), null, r[c])).join("")
+        + `</div>` + actionsHTML(r);
+    }
+  }
+  return `<div class="card" data-row="${esc(r.id)}">${body}</div>`;
+}
+
+/// Fibre/sugar/sat fat/sodium the user typed into a correction, stored in a
+/// jsonb `extras` map. Read-only here — they ride along with the approval.
+function extrasFields(r, f) {
+  const e = r.extras;
+  if (!e || typeof e !== "object") return "";
+  return Object.entries(e).map(([k, v]) =>
+    field(r, k.replace(/_/g, " "), null, fmt(num(v) * f))).join("");
+}
 
 function render() {
-  // Verified Foods is a READ-ONLY window on the crowd-built database:
-  // label scans that passed the app's confidence + consistency checks are
-  // auto-approved and land here (no review needed). It's where most of the
-  // day-to-day activity actually is — the moderation tabs only fill when a
-  // user submits a correction or an AI candidate needs a decision.
-  const readOnly = currentTab === "verified_foods";
+  const el = document.getElementById("content");
   if (!rows.length) {
-    document.getElementById("content").innerHTML = readOnly
-      ? "<p style='color:#9ccc65'>No verified foods yet — they appear as users scan nutrition labels.</p>"
-      : "<p style='color:#9ccc65'>Nothing pending — go touch grass 🌿</p>";
-    // …unless it isn't empty at all. Verify before believing it.
+    el.innerHTML = currentTab === "verified_foods"
+      ? `<p class="empty">No verified foods yet — they appear as users scan nutrition labels.</p>`
+      : `<p class="empty">Nothing pending — go touch grass 🌿</p>`;
     permissionsLookBroken().then((broken) => {
       if (!broken || rows.length) return;
-      document.getElementById("content").innerHTML =
-        "<div style='background:#5a1d1d;border:1px solid #ff8a80;border-radius:10px;" +
-        "padding:16px;color:#ffcdd2;max-width:720px'>" +
-        "<strong>This dashboard cannot read the database.</strong><br><br>" +
-        "The tables are NOT empty — an anonymous client can see rows that " +
-        "your signed-in session cannot. That means the row-level security " +
-        "policies for the <code>authenticated</code> role are missing or " +
-        "wrong.<br><br>" +
-        "A blocked SELECT returns an empty result rather than an error, which " +
-        "is why this looks like an empty queue.<br><br>" +
-        "Fix: re-apply <code>supabase/migrations/20260801_moderation_dashboard_read.sql</code> " +
-        "with <code>supabase db push</code>.</div>";
+      el.innerHTML =
+        `<div class="card" style="background:#5a1d1d;border-color:#ff8a80;color:#ffcdd2">
+         <h2>This dashboard cannot read the database.</h2>
+         <p>The tables are NOT empty — an anonymous client can see rows your
+         signed-in session cannot. The row-level security policies for the
+         <code>authenticated</code> role are missing or wrong.</p>
+         <p>A blocked SELECT returns an empty result rather than an error,
+         which is why this looks like an empty queue.</p>
+         <p>Fix: re-apply
+         <code>supabase/migrations/20260801_moderation_dashboard_read.sql</code>
+         with <code>supabase db push</code>.</p></div>`;
     });
     return;
   }
-  const cols = Object.keys(rows[0]).filter((c) =>
-    !["label_photo_b64", "raw_response", "submitter_id"].includes(c));
-  const showReach = currentTab === "moderation_ai_candidates";
-  let html = "<table><tr>" + cols.map((c) => `<th>${c}</th>`).join("")
-    + (showReach ? "<th>reach (7d)</th>" : "")
-    + (readOnly ? "" : "<th>actions</th>") + "</tr>";
-  for (const r of rows) {
-    html += "<tr>" + cols.map((c) => {
-      const v = r[c] ?? "";
-      if (!readOnly && editable.includes(c)) {
-        const wide = ["name", "brand", "food_name"].includes(c) ? "wide" : "";
-        return `<td><input class="${wide}" data-id="${r.id}" data-col="${c}" value="${String(v).replace(/"/g, "&quot;")}"></td>`;
-      }
-      if (c.includes("trust")) return `<td class="status-${v}">${v}</td>`;
-      if (c.includes("status")) return `<td class="status-${v}">${v}</td>`;
-      return `<td>${typeof v === "string" && v.length > 40 ? v.slice(0, 40) + "…" : v}</td>`;
-    }).join("");
-    if (showReach) {
-      html += `<td>${reachCell(r)}</td>`;
-    }
-    if (!readOnly) {
-      html += `<td>
-        <button class="approve" onclick="setStatus('${r.id}','approved')">✓</button>
-        <button class="reject" onclick="setStatus('${r.id}','rejected')">✗</button>
-        <button class="del" onclick="deleteRow('${r.id}')">🗑</button>
-      </td>`;
-    }
-    html += "</tr>";
-  }
-  html += readOnly
-    ? "</table><p style='color:#789;font-size:12px'>Read-only. These foods "
-      + "were validated automatically from users' label scans (confidence "
-      + "≥95, consistent macros). Trust rises Bronze → Silver → Gold as more "
-      + "users confirm the same values; conflicting scans are flagged, never "
-      + "auto-overwritten.</p>"
-    : "</table><p style='color:#789;font-size:12px'>Edit any field, then "
-      + "approve — edits save with the approval and flow back into Caterpillar. "
-      + "🗑 removes a row permanently."
-      + (showReach ? " \"Reach\" = devices active in the last 7 days that "
-         + "have pulled this approval." : "") + "</p>";
-  document.getElementById("content").innerHTML = html;
+  el.innerHTML = rows.map(cardHTML).join("") + tabNote();
 }
 
-// "42/58 (72%)" for an approved item with reach data; "—" for anything not
-// yet approved (0% would misleadingly read as "nobody wants this").
+function tabNote() {
+  if (currentTab === "verified_foods") {
+    return `<p class="note">Read-only. These were validated automatically from
+      users' label scans. Trust rises Bronze → Silver → Gold as more users
+      confirm the same values; conflicting scans are flagged, never
+      auto-overwritten.</p>`;
+  }
+  if (currentTab === "moderation_ai_candidates") {
+    return `<p class="note">Sorted by confidence, highest first — but
+      confidence predicts approval poorly (33–44% error at every threshold
+      tested), so it orders your time rather than deciding anything.
+      "Reach" = devices active in the last 7 days that pulled this approval.</p>`;
+  }
+  return `<p class="note">Edit any field, then approve — edits save with the
+    approval and flow back into Caterpillar. 🗑 removes a row permanently.</p>`;
+}
+
 function reachCell(r) {
-  if (r.approval_status !== "approved") return "—";
   const stats = reachById[r.id];
   if (!stats || stats.active_devices === 0) return "0/0";
   const pct = Math.round(100 * stats.reached_devices / stats.active_devices);
   return `${stats.reached_devices}/${stats.active_devices} (${pct}%)`;
 }
 
-// Numeric columns: an empty box must become NULL, never "" — Postgres
-// rejects "" for a double precision column.
-const numericCols = new Set(["calories", "protein", "carbs", "fat", "fibre",
-  "serving_size", "caffeine_mg", "ai_confidence", "times_suggested",
-  "selection_count", "request_count", "displayed_calories"]);
-
+// ── writes ────────────────────────────────────────────────────────────────
 window.setStatus = async (id, status) => {
+  const row = rows.find((r) => String(r.id) === String(id));
+  // Undo the display conversion: what's on screen may be per-serving, but
+  // per-100 g is what the app stores and what every reader expects.
+  const f = row ? displayFactor(row) : 1;
   const patch = {};
-  document.querySelectorAll(`input[data-id="${id}"]`).forEach((i) => {
+  document.querySelectorAll(`input[data-id="${CSS.escape(String(id))}"]`).forEach((i) => {
+    const col = i.dataset.col;
     const raw = i.value.trim();
+    // Untouched field: leave the stored value exactly as it is.
+    if (raw === (i.dataset.orig ?? "")) return;
     if (raw === "") {
-      // Leave numeric blanks as NULL; skip blank text so we never wipe it
-      if (numericCols.has(i.dataset.col)) patch[i.dataset.col] = null;
+      // Numeric blanks become NULL; blank text is skipped so we never wipe it.
+      if (numericCols.has(col)) patch[col] = null;
       return;
     }
-    patch[i.dataset.col] = numericCols.has(i.dataset.col)
-      ? Number(raw) : raw;
+    if (!numericCols.has(col)) { patch[col] = raw; return; }
+    const n = Number(raw);
+    if (Number.isNaN(n)) return;
+    // serving_size is a real measurement, not a per-100 g value — it must
+    // never be divided by the factor derived from itself.
+    patch[col] = (i.dataset.factor && col !== "serving_size" && f !== 1)
+      ? n / f : n;
   });
   const statusCol = currentTab === "moderation_ai_candidates"
     ? "approval_status" : "status";
@@ -279,10 +614,12 @@ window.deleteRow = async (id) => {
 
 window.exportCSV = () => {
   if (!rows.length) return;
-  const cols = Object.keys(rows[0]);
-  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  // Photos are megabytes of base64 and unreadable in a spreadsheet.
+  const cols = Object.keys(rows[0]).filter((c) =>
+    !["photos_b64", "label_photo_b64"].includes(c));
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const csv = [cols.join(",")]
-    .concat(rows.map((r) => cols.map((c) => esc(r[c])).join(",")))
+    .concat(rows.map((r) => cols.map((c) => q(r[c])).join(",")))
     .join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -290,7 +627,6 @@ window.exportCSV = () => {
   a.click();
 };
 
-// Restore session on reload
 const { data: { session } } = await sb.auth.getSession();
 if (session) showApp();
 </script>
