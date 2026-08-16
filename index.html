@@ -273,6 +273,48 @@ async function permissionsLookBroken() {
   } catch { return false; }
 }
 
+/// Columns to fetch for the list.
+///
+/// ── WHY VERIFIED FOODS IS SPELLED OUT ──
+/// `select("*")` pulled `photos_b64` — up to three base64 JPEGs per row — for
+/// every row on every load, and `load()` runs on a 60-second timer. At 120
+/// rows that is tens of megabytes a minute for as long as the tab is open,
+/// against a 5 GB monthly egress allowance. It got worse linearly as the
+/// table grew, and none of it was being looked at: most verified rows have no
+/// photo, and a verified row's numbers are read-only now anyway.
+///
+/// Corrections keep their photos eagerly, because that tab's entire job is
+/// judging proposed numbers against the panel they were read from. Verified
+/// Foods loads a photo only when asked — see `showPhotos`.
+///
+/// Spelled out rather than excluded because PostgREST has no "all but this"
+/// syntax. A column added to verified_foods later has to be added here too;
+/// that is the cost of not shipping megabytes nobody reads.
+const VERIFIED_LIST_COLUMNS = [
+  "id", "barcode", "brand", "product_name", "flavour", "serving_size_g",
+  "calories", "protein_g", "carbs_g", "fat_g", "fibre_g", "source",
+  "confidence", "verification_count", "trust_level", "flagged_for_review",
+  "verification_basis", "name_review", "conflict_note",
+  "created_at", "updated_at",
+].join(",");
+
+function listColumns() {
+  return currentTab === "verified_foods" ? VERIFIED_LIST_COLUMNS : "*";
+}
+
+/// Photos fetched on demand, kept so the 60s refresh doesn't discard them.
+const photosById = {};
+
+window.showPhotos = async (id) => {
+  const slot = document.getElementById(`shots-${id}`);
+  if (slot) slot.innerHTML = `<p class="noshots">Loading…</p>`;
+  const { data, error } = await sb.from("verified_foods")
+    .select("photos_b64").eq("id", id).single();
+  if (error) { if (slot) slot.innerHTML = `<p class="noshots">${esc(error.message)}</p>`; return; }
+  photosById[id] = photosOf(data ?? {});
+  render();
+};
+
 async function load() {
   // AI candidates sort by CONFIDENCE, highest first. Scored against 27 real
   // decisions, ai_confidence turned out not to predict approval well enough
@@ -280,7 +322,7 @@ async function load() {
   // but it is still the best available ordering, so review time goes to the
   // most likely keepers first. selection_count breaks ties: a candidate a
   // user actually picked is the strongest signal there is.
-  let q = sb.from(currentTab).select("*");
+  let q = sb.from(currentTab).select(listColumns());
   q = currentTab === "moderation_ai_candidates"
     ? q.order("ai_confidence", { ascending: false })
        .order("selection_count", { ascending: false })
@@ -343,6 +385,27 @@ function shotsHTML(r, expected) {
   }
   return `<div class="shots">` + p.map((b64) =>
     `<img src="data:image/jpeg;base64,${b64}" alt="submitted photo" `
+    + `onclick="zoom(this.src)">`).join("") + `</div>`;
+}
+
+/// Verified Foods photos: a button until you want them.
+///
+/// The label shot matters when you are deciding whether a record is sound
+/// enough to keep — which is occasional. Shipping every photo on every
+/// refresh to serve that is what made the tab expensive.
+function verifiedShotsHTML(r) {
+  const loaded = photosById[r.id];
+  if (loaded === undefined) {
+    return `<div id="shots-${esc(r.id)}">`
+      + `<button class="csv" onclick="showPhotos('${esc(r.id)}')">`
+      + `📷 Label photo</button></div>`;
+  }
+  if (!loaded.length) {
+    return `<div id="shots-${esc(r.id)}">`
+      + `<p class="noshots">No photo stored for this record.</p></div>`;
+  }
+  return `<div id="shots-${esc(r.id)}" class="shots">` + loaded.map((b64) =>
+    `<img src="data:image/jpeg;base64,${b64}" alt="label photo" `
     + `onclick="zoom(this.src)">`).join("") + `</div>`;
 }
 
@@ -498,7 +561,7 @@ function cardHTML(r) {
     }
     case "verified_foods": {
       const trust = r.trust_level || "bronze";
-      body = shotsHTML(r, false)
+      body = verifiedShotsHTML(r)
         + `<h2>${esc(titleOf(r))}</h2>`
         + `<div class="sub">${esc(r.brand || "no brand")}`
         + (r.barcode ? ` · ${esc(r.barcode)}` : "") + `</div>`

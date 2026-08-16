@@ -24,9 +24,10 @@ const els = {};
 const el = () => ({ innerHTML: "", textContent: "", style: {}, addEventListener() {} });
 const GLOBALS = {
   sb: {
-    from() {
+    from(t) {
       const q = {
-        select: () => q, order: () => q,
+        select: (cols) => { calls.push(["select", t, cols]); return q; },
+        order: () => q,
         limit: () => Promise.resolve({ data: GLOBALS.rows }),
         update: (p) => ({
           in: (c, ids) => { calls.push(["update", p, ids]); return Promise.resolve({}); },
@@ -122,6 +123,27 @@ ok(card.includes('data-col="serving_size_g"'), "serving editable");
 ok(!card.includes('data-col="calories"'), "calories NOT editable");
 ok(!card.includes('data-col="protein_g"'), "protein NOT editable");
 ok(!card.includes('data-col="barcode"'), "barcode NOT editable");
+
+// 8. The list query must not drag photos across the wire.
+//    This is the whole reason the column list is spelled out: select("*") on
+//    a 60-second timer was shipping every base64 JPEG on every refresh.
+mod.setTab("verified_foods");
+calls.length = 0;
+await mod.load();
+const sel = calls.find((c) => c[0] === "select" && c[1] === "verified_foods");
+ok(!!sel, "verified_foods issued a select");
+ok(!String(sel[2]).includes("photos_b64"),
+   "verified_foods list does NOT fetch photos_b64");
+ok(String(sel[2]).includes("product_name") && String(sel[2]).includes("calories"),
+   "…but still fetches the fields the card shows");
+
+// 9. Corrections keep their photos — that tab's job is checking numbers
+//    against the panel they were read from.
+mod.setTab("moderation_submissions");
+calls.length = 0;
+await mod.load();
+const sub = calls.find((c) => c[0] === "select" && c[1] === "moderation_submissions");
+ok(sub && sub[2] === "*", "corrections still fetch everything, photos included");
 
 console.log(fails ? `\n${fails} FAILED` : "\nall good");
 process.exit(fails ? 1 : 0);
