@@ -469,18 +469,47 @@ function cardHTML(r) {
         + `<span class="badge">confirmed ${r.verification_count ?? 1}×</span>`
         + (r.verification_basis ? `<span class="badge">verified by ${esc(r.verification_basis)}</span>` : "")
         + (r.flagged_for_review ? `<span class="badge bad">conflict flagged</span>` : "")
+        // ── A NAME THAT CLASSIFIES INSTEAD OF NAMING ──
+        // "muffin" for an English muffin. The numbers on these rows are
+        // usually right — they came off a real panel — so the row is stored
+        // and flagged rather than refused. What it needs is a human to type
+        // the name that's printed on the pack. Rename the row and the flag
+        // clears on save; a later barcode-matched scan with a real name
+        // clears it without anyone doing anything.
+        + (r.name_review ? `<span class="badge bad">name needs review</span>` : "")
         + `</div>`
+        + (r.name_review
+            ? `<div class="basis"><strong>This name is a category, not a product.</strong>
+                 Nutrition is trusted; the name is not, so the row stays bronze
+                 until it has a real one. Rename it below.</div>`
+            : "")
         + `<div class="basis">Values are <strong>per serving`
         + (serving ? ` (${fmt(serving)} g)` : "") + `</strong> — as printed on the label.</div>`
         + `<div class="fields">`
-        + field(r, "Serving g", null, fmt(r.serving_size_g))
-        + field(r, "Calories", null, fmt(r.calories))
-        + field(r, "Protein g", null, fmt(r.protein_g))
-        + field(r, "Carbs g", null, fmt(r.carbs_g))
-        + field(r, "Fat g", null, fmt(r.fat_g))
-        + field(r, "Fibre g", null, fmt(r.fibre_g))
+        // ── EDITABLE, AND DELETABLE ──
+        // These were read-only, which meant a wrong verified row was
+        // permanently wrong: the app trusts this table above everything else,
+        // and there was no pathway to fix one anywhere. A bag of licorice went
+        // in as a LIQUID and the only way to undo it was a hand-written SQL
+        // delete. Anything the app treats as truth needs a way to be corrected
+        // by the person responsible for it.
+        + field(r, "Product name", "product_name", r.product_name)
+        + field(r, "Brand", "brand", r.brand)
+        + field(r, "Barcode", "barcode", r.barcode)
+        + field(r, "Serving g", "serving_size_g", fmt(r.serving_size_g))
+        + field(r, "Calories", "calories", fmt(r.calories))
+        + field(r, "Protein g", "protein_g", fmt(r.protein_g))
+        + field(r, "Carbs g", "carbs_g", fmt(r.carbs_g))
+        + field(r, "Fat g", "fat_g", fmt(r.fat_g))
+        + field(r, "Fibre g", "fibre_g", fmt(r.fibre_g))
         + `</div>`
-        + (r.conflict_note ? `<p class="note">${esc(r.conflict_note)}</p>` : "");
+        + (r.conflict_note ? `<p class="note">${esc(r.conflict_note)}</p>` : "")
+        + `<div class="acts">`
+        + `<button class="ok" style="flex:1 !important" `
+        + `onclick="saveRow('${esc(r.id)}')">Save changes</button>`
+        + `<button class="del" onclick="deleteRow('${esc(r.id)}')" `
+        + `title="Delete permanently">🗑</button>`
+        + `</div>`;
       break;
     }
     case "moderation_food_requests": {
@@ -563,6 +592,13 @@ function tabNote() {
       tested), so it orders your time rather than deciding anything.
       "Reach" = devices active in the last 7 days that pulled this approval.</p>`;
   }
+  if (currentTab === "verified_foods") {
+    return `<p class="note">These are the app's highest-trust records — a
+      barcode scan believes this table over every other source. Edit any field
+      and <strong>Save changes</strong>, or 🗑 to remove the record entirely so
+      the next scan of that barcode starts fresh. Values are stored exactly as
+      printed on the label, so what you type is what the app reads.</p>`;
+  }
   return `<p class="note">Edit any field, then approve — edits save with the
     approval and flow back into Caterpillar. 🗑 removes a row permanently.</p>`;
 }
@@ -602,6 +638,37 @@ window.setStatus = async (id, status) => {
   const statusCol = currentTab === "moderation_ai_candidates"
     ? "approval_status" : "status";
   patch[statusCol] = status;
+  const { error } = await sb.from(currentTab).update(patch).eq("id", id);
+  if (error) alert(error.message); else load();
+};
+
+/// Save edits with no status change.
+///
+/// setStatus() exists for queues that get approved or rejected; verified_foods
+/// has no status to set — a row is either right or it needs correcting. It
+/// also stores values exactly as printed on the label, so unlike the
+/// correction queues nothing here is divided by a per-100 g factor.
+window.saveRow = async (id) => {
+  const patch = {};
+  document.querySelectorAll(`input[data-id="${CSS.escape(String(id))}"]`).forEach((i) => {
+    const col = i.dataset.col;
+    const raw = i.value.trim();
+    if (raw === (i.dataset.orig ?? "")) return;   // untouched
+    if (raw === "") {
+      if (numericCols.has(col)) patch[col] = null;
+      return;
+    }
+    if (!numericCols.has(col)) { patch[col] = raw; return; }
+    const n = Number(raw);
+    if (!Number.isNaN(n)) patch[col] = n;
+  });
+  if (!Object.keys(patch).length) { alert("Nothing changed."); return; }
+  // Renaming a flagged row IS the fix, so clear the flag in the same write.
+  // Leaving it set would send the moderator back to a row they had already
+  // dealt with, and the queue would never empty.
+  if (currentTab === "verified_foods" && patch.product_name) {
+    patch.name_review = false;
+  }
   const { error } = await sb.from(currentTab).update(patch).eq("id", id);
   if (error) alert(error.message); else load();
 };
