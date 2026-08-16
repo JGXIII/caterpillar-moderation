@@ -124,6 +124,34 @@
   .empty { color:var(--green-lt); text-align:center; padding:40px 10px; }
   .note { color:#789; font-size:12px; margin:6px 2px 20px; }
 
+  /* ── Multi-select ──
+     One-by-one was the only way to clear a queue, and a queue can arrive
+     hundreds long. The checkbox sits in the card's top-right so it is
+     reachable with a thumb and never overlaps the title. */
+  .card { position:relative; }
+  .card.picked { border-color:var(--green-lt);
+                 box-shadow:inset 0 0 0 1px var(--green-lt); }
+  .pick { position:absolute; top:10px; right:10px; width:26px; height:26px;
+          accent-color:var(--green-lt); cursor:pointer; z-index:2; }
+  .card h2 { padding-right:34px; }
+
+  /* The bulk bar only exists when something is selected, so it never takes
+     space from the queue it is acting on. */
+  .bulk { position:sticky; bottom:0; z-index:30; display:flex; gap:8px;
+          align-items:center; flex-wrap:wrap; padding:10px 12px;
+          margin:0 -12px -12px; background:var(--card);
+          border-top:1px solid var(--green-lt); }
+  .bulk .n { font-weight:700; color:var(--green-lt); font-size:14px;
+             margin-right:auto; }
+  .bulk button { border:none; border-radius:9px; padding:10px 13px; color:#fff;
+                 font-size:14px; font-weight:600; cursor:pointer; }
+  .bulk .clear { background:#33404a; }
+  .selbar { display:flex; gap:8px; align-items:center; margin:0 2px 12px;
+            font-size:13px; color:var(--dim); flex-wrap:wrap; }
+  .selbar button { background:none; border:1px solid #345; color:var(--green-lt);
+                   border-radius:8px; padding:6px 11px; cursor:pointer;
+                   font-size:13px; }
+
   /* Full-size photo viewer */
   #lightbox { position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:50;
               display:none; align-items:center; justify-content:center;
@@ -166,7 +194,6 @@ const TABS = [
   { id:"moderation_ai_candidates",  label:"AI Candidates" },
   { id:"verified_foods",            label:"Verified Foods" },
   { id:"moderation_food_requests",  label:"Requests" },
-  { id:"moderation_barcode_triage", label:"Barcode Fails" },
   { id:"account_deletion_requests", label:"Deletions" },
 ];
 
@@ -194,6 +221,10 @@ function buildTabs() {
   document.querySelectorAll(".tabs button").forEach((b) =>
     b.addEventListener("click", () => {
       currentTab = b.dataset.tab;
+      // Ids belong to ONE table. Carrying a selection across tabs would aim a
+      // bulk delete at rows that aren't there — silently doing nothing, or
+      // worse, matching something unrelated.
+      selected.clear();
       buildTabs();
       load();
     }));
@@ -267,6 +298,12 @@ async function load() {
     const { data: reach } = await sb.from("moderation_candidate_reach").select("*");
     for (const r of reach ?? []) reachById[r.candidate_id] = r;
   }
+
+  // Drop selections for rows that no longer exist — load() runs on a timer,
+  // and a stale id in the set would show a count for something that isn't
+  // on screen.
+  const present = new Set(rows.map((r) => String(r.id)));
+  for (const id of [...selected]) if (!present.has(id)) selected.delete(id);
 
   document.getElementById("refreshed").textContent =
     `${rows.length} · ${new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}`;
@@ -486,22 +523,29 @@ function cardHTML(r) {
         + `<div class="basis">Values are <strong>per serving`
         + (serving ? ` (${fmt(serving)} g)` : "") + `</strong> — as printed on the label.</div>`
         + `<div class="fields">`
-        // ── EDITABLE, AND DELETABLE ──
-        // These were read-only, which meant a wrong verified row was
-        // permanently wrong: the app trusts this table above everything else,
-        // and there was no pathway to fix one anywhere. A bag of licorice went
-        // in as a LIQUID and the only way to undo it was a hand-written SQL
-        // delete. Anything the app treats as truth needs a way to be corrected
-        // by the person responsible for it.
+        // ── THREE FIELDS EDITABLE, THE REST READ-ONLY ──
+        // Everything here was editable, which was the wrong shape for what
+        // this table IS. These rows are the app's highest-trust record: the
+        // nutrition came off a photographed label through the verified-read
+        // flow, which exists precisely so that numbers are never typed. A
+        // dashboard that invites someone to retype them by hand undoes that.
+        //
+        // What genuinely does need fixing by hand is the IDENTITY of the row —
+        // the name and brand a crowd-sourced database got wrong or left blank,
+        // and the serving size, which is the one measurement a label photo
+        // routinely fails to capture.
+        //
+        // A row whose NUMBERS are wrong is not an edit, it's a bad record:
+        // delete it and let the next scan re-verify from the label.
         + field(r, "Product name", "product_name", r.product_name)
         + field(r, "Brand", "brand", r.brand)
-        + field(r, "Barcode", "barcode", r.barcode)
-        + field(r, "Serving g", "serving_size_g", fmt(r.serving_size_g))
-        + field(r, "Calories", "calories", fmt(r.calories))
-        + field(r, "Protein g", "protein_g", fmt(r.protein_g))
-        + field(r, "Carbs g", "carbs_g", fmt(r.carbs_g))
-        + field(r, "Fat g", "fat_g", fmt(r.fat_g))
-        + field(r, "Fibre g", "fibre_g", fmt(r.fibre_g))
+        + field(r, "Serving", "serving_size_g", fmt(r.serving_size_g))
+        + field(r, "Barcode", null, r.barcode || "—")
+        + field(r, "Calories", null, fmt(r.calories) || "—")
+        + field(r, "Protein g", null, fmt(r.protein_g) || "—")
+        + field(r, "Carbs g", null, fmt(r.carbs_g) || "—")
+        + field(r, "Fat g", null, fmt(r.fat_g) || "—")
+        + field(r, "Fibre g", null, fmt(r.fibre_g) || "—")
         + `</div>`
         + (r.conflict_note ? `<p class="note">${esc(r.conflict_note)}</p>` : "")
         + `<div class="acts">`
@@ -521,18 +565,6 @@ function cardHTML(r) {
         + actionsHTML(r);
       break;
     }
-    case "moderation_barcode_triage": {
-      body = `<h2>${esc(r.barcode || "(no barcode)")}</h2>`
-        + `<div class="sub">${esc(r.error_signature || "no error signature")}</div>`
-        + `<div class="fields">`
-        + field(r, "Shown as", null, fmt(r.displayed_calories) || "—")
-        + `</div>`
-        + (r.raw_response
-            ? `<p class="note">${esc(String(r.raw_response).slice(0, 300))}</p>` : "")
-        + `<div class="acts"><button class="del" style="flex:1 !important" `
-        + `onclick="deleteRow('${esc(r.id)}')">🗑 Delete</button></div>`;
-      break;
-    }
     default: {
       // Anything without a purpose-built card still shows every field,
       // labelled — never a horizontally scrolling table.
@@ -542,7 +574,12 @@ function cardHTML(r) {
         + `</div>` + actionsHTML(r);
     }
   }
-  return `<div class="card" data-row="${esc(r.id)}">${body}</div>`;
+  const picked = selected.has(String(r.id));
+  return `<div class="card${picked ? " picked" : ""}" data-row="${esc(r.id)}">`
+    + `<input type="checkbox" class="pick" ${picked ? "checked" : ""} `
+    + `onchange="togglePick('${esc(r.id)}')" `
+    + `aria-label="Select this row">`
+    + `${body}</div>`;
 }
 
 /// Fibre/sugar/sat fat/sodium the user typed into a correction, stored in a
@@ -576,28 +613,140 @@ function render() {
     });
     return;
   }
-  el.innerHTML = rows.map(cardHTML).join("") + tabNote();
+  // Rows no longer needing attention are hidden rather than deleted — see
+  // `visibleRows`.
+  const shown = visibleRows();
+  const hidden = rows.length - shown.length;
+  el.innerHTML = selectBarHTML(shown, hidden)
+    + shown.map(cardHTML).join("")
+    + tabNote()
+    + bulkBarHTML();
 }
 
+// ── multi-select ──────────────────────────────────────────────────────────
+// Clearing a queue one card at a time doesn't scale past a few dozen rows,
+// and these arrive in the hundreds.
+const selected = new Set();
+
+/// Which rows this tab currently shows.
+///
+/// ── WHY FULLY-REACHED CANDIDATES ARE HIDDEN, NOT DELETED ──
+/// An approved AI candidate that has reached every active device looks
+/// finished, and it is — but the ROW is still doing a job. `pullApprovals`
+/// re-reads every non-pending candidate on each sync with no "since" filter
+/// and copies it into that device's local index. The table is the source a
+/// device pulls FROM, not a delivery receipt.
+///
+/// "100%" also means 100% of devices seen in the last SEVEN DAYS, which is
+/// what `moderation_candidate_reach` counts. It does not include a phone
+/// that's been off for a fortnight, and it cannot include an install that
+/// doesn't exist yet — every future user gets this food by pulling this row.
+/// Delete it and it is gone for all of them.
+///
+/// So the queue hides them and the data stays.
+function visibleRows() {
+  if (currentTab !== "moderation_ai_candidates" || !hideSettled) return rows;
+  return rows.filter((r) => {
+    if (r.approval_status !== "approved") return true;
+    const s = reachById[r.id];
+    return !(s && s.active_devices > 0 && s.reached_devices >= s.active_devices);
+  });
+}
+let hideSettled = true;
+
+window.toggleSettled = () => { hideSettled = !hideSettled; render(); };
+
+function selectBarHTML(shown, hidden) {
+  const all = shown.length && shown.every((r) => selected.has(String(r.id)));
+  return `<div class="selbar">`
+    + `<button onclick="selectAll(${all ? "false" : "true"})">`
+    + `${all ? "Clear selection" : `Select all ${shown.length}`}</button>`
+    + (currentTab === "moderation_ai_candidates"
+        ? `<button onclick="toggleSettled()">`
+          + `${hideSettled ? "Show" : "Hide"} fully-reached</button>`
+          + (hidden ? `<span>${hidden} settled and hidden</span>` : "")
+        : "")
+    + `</div>`;
+}
+
+function bulkBarHTML() {
+  if (!selected.size) return "";
+  // verified_foods has no status column — a row there is either right or it
+  // is a bad record. Offering Approve would write a column that isn't there.
+  const hasStatus = currentTab !== "verified_foods";
+  return `<div class="bulk"><span class="n">${selected.size} selected</span>`
+    + (hasStatus
+        ? `<button class="approve" onclick="bulk('approved')">✓ Approve</button>`
+          + `<button class="reject" onclick="bulk('rejected')">✗ Reject</button>`
+        : "")
+    + `<button class="reject" onclick="bulkDelete()">🗑 Delete</button>`
+    + `<button class="clear" onclick="selectAll(false)">Clear</button></div>`;
+}
+
+window.togglePick = (id) => {
+  const key = String(id);
+  if (selected.has(key)) selected.delete(key); else selected.add(key);
+  render();
+};
+
+window.selectAll = (on) => {
+  selected.clear();
+  if (on) for (const r of visibleRows()) selected.add(String(r.id));
+  render();
+};
+
+/// Bulk status change.
+///
+/// Deliberately does NOT gather field edits the way `setStatus` does. Bulk is
+/// for rows you have judged as they stand; sweeping up whatever happens to be
+/// typed into a card you didn't mean to include is how a batch action becomes
+/// something you can't undo. Edit-then-approve stays a per-card action.
+window.bulk = async (status) => {
+  const ids = [...selected];
+  if (!ids.length) return;
+  if (!confirm(`Mark ${ids.length} row${ids.length === 1 ? "" : "s"} ${status}?`)) return;
+  const statusCol = currentTab === "moderation_ai_candidates"
+    ? "approval_status" : "status";
+  const { error } = await sb.from(currentTab)
+    .update({ [statusCol]: status }).in("id", ids);
+  if (error) { alert(error.message); return; }
+  selected.clear();
+  load();
+};
+
+window.bulkDelete = async () => {
+  const ids = [...selected];
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} row${ids.length === 1 ? "" : "s"} permanently?`
+               + "\n\nThis cannot be undone.")) return;
+  const { error } = await sb.from(currentTab).delete().in("id", ids);
+  if (error) { alert(error.message); return; }
+  selected.clear();
+  load();
+};
+
 function tabNote() {
-  if (currentTab === "verified_foods") {
-    return `<p class="note">Read-only. These were validated automatically from
-      users' label scans. Trust rises Bronze → Silver → Gold as more users
-      confirm the same values; conflicting scans are flagged, never
-      auto-overwritten.</p>`;
-  }
   if (currentTab === "moderation_ai_candidates") {
     return `<p class="note">Sorted by confidence, highest first — but
       confidence predicts approval poorly (33–44% error at every threshold
-      tested), so it orders your time rather than deciding anything.
-      "Reach" = devices active in the last 7 days that pulled this approval.</p>`;
+      tested), so it orders your time rather than deciding anything.<br><br>
+      <strong>Reach</strong> = devices seen in the last <strong>7 days</strong>
+      that have pulled this approval. 100% does <strong>not</strong> mean the
+      row is finished with: every sync re-reads the whole approved set, so this
+      row is what a phone that's been off for a fortnight — and every install
+      that doesn't exist yet — will pull the food from. Deleting it takes the
+      food away from all of them. Fully-reached rows are hidden from this queue
+      instead, which is what "settled" means above.</p>`;
   }
   if (currentTab === "verified_foods") {
     return `<p class="note">These are the app's highest-trust records — a
-      barcode scan believes this table over every other source. Edit any field
-      and <strong>Save changes</strong>, or 🗑 to remove the record entirely so
-      the next scan of that barcode starts fresh. Values are stored exactly as
-      printed on the label, so what you type is what the app reads.</p>`;
+      barcode scan believes this table over every other source. You can correct
+      the <strong>name, brand and serving size</strong>: the things a
+      crowd-sourced database gets wrong and a label photo can't capture. The
+      nutrition is read-only on purpose — it came off a photographed label
+      through the verified-read flow, which exists so those numbers are never
+      typed by hand. If they're wrong, the record is wrong: 🗑 it and the next
+      scan of that barcode re-verifies from the label.</p>`;
   }
   return `<p class="note">Edit any field, then approve — edits save with the
     approval and flow back into Caterpillar. 🗑 removes a row permanently.</p>`;
