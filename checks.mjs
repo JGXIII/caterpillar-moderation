@@ -55,7 +55,7 @@ globalThis.CSS = { escape: (s) => s };
 
 const mod = new Function("GLOBALS", `${js}
   return { render, visibleRows, cardHTML, load,
-           setTab:(t)=>{currentTab=t;}, setRows:(r)=>{rows=r;},
+           setTab:(t)=>{currentTab=t;}, setRows:(r)=>{rows=r;}, pageSize,
            setReach:(m)=>{Object.assign(reachById,m);},
            selected, tabs:TABS };`)(GLOBALS);
 
@@ -137,13 +137,26 @@ ok(!String(sel[2]).includes("photos_b64"),
 ok(String(sel[2]).includes("product_name") && String(sel[2]).includes("calories"),
    "…but still fetches the fields the card shows");
 
-// 9. Corrections keep their photos — that tab's job is checking numbers
-//    against the panel they were read from.
+// 9. Corrections no longer fetch photos in the list either.
+//
+//    This REVERSES the earlier decision, and the reason is worth keeping: the
+//    argument for eager photos was that checking numbers against the panel is
+//    that tab's whole job. True — but 110 rows of base64 assembled in one
+//    statement was cancelled by Postgres ("canceling statement due to
+//    statement timeout"), every 60 seconds, so the tab did not load at all. A
+//    photo you have to tap for beats a page that won't open.
 mod.setTab("moderation_submissions");
 calls.length = 0;
 await mod.load();
 const sub = calls.find((c) => c[0] === "select" && c[1] === "moderation_submissions");
-ok(sub && sub[2] === "*", "corrections still fetch everything, photos included");
+ok(!!sub, "corrections issued a select");
+ok(!String(sub[2]).includes("photos_b64"),
+   "corrections list must NOT fetch photos_b64");
+ok(String(sub[2]).includes("food_name") && String(sub[2]).includes("calories"),
+   "…but still fetches the fields the card shows");
+
+// 10. Nothing asks for five hundred rows any more.
+ok(mod.pageSize() <= 200, "page size is bounded");
 
 console.log(fails ? `\n${fails} FAILED` : "\nall good");
 process.exit(fails ? 1 : 0);

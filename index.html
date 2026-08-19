@@ -298,8 +298,41 @@ const VERIFIED_LIST_COLUMNS = [
   "created_at", "updated_at",
 ].join(",");
 
+/// Corrections carry the same base64 photos, and there are more of them.
+///
+/// ── THE STATEMENT TIMEOUT ──
+/// `select("*")` over 110 correction rows, each with up to three base64
+/// JPEGs, is tens of megabytes assembled inside one statement — and it ran
+/// again every 60 seconds. Postgres cancelled it, and because the reply was
+/// unguarded the error landed on whichever tab was open by then.
+///
+/// Same treatment as Verified Foods: fetch the fields the card needs, load a
+/// row's photos when asked. It costs a tap per row, which is a real loss on
+/// the tab whose whole job is checking numbers against a panel — but the tab
+/// was timing out, and a photo you have to tap for beats a page that won't
+/// load.
+const SUBMISSION_LIST_COLUMNS = [
+  "id", "barcode", "food_name", "brand", "kind", "country", "status",
+  "calories", "protein", "carbs", "fat", "fibre", "serving_size",
+  "extras", "created_at",
+].join(",");
+
 function listColumns() {
-  return currentTab === "verified_foods" ? VERIFIED_LIST_COLUMNS : "*";
+  switch (currentTab) {
+    case "verified_foods":          return VERIFIED_LIST_COLUMNS;
+    case "moderation_submissions":  return SUBMISSION_LIST_COLUMNS;
+    default:                        return "*";
+  }
+}
+
+/// How many rows to ask for.
+///
+/// 500 was a "surely that's enough" number chosen when every row was small.
+/// The queues are the wrong shape for it: a moderator works through the top
+/// of the list, and asking for five hundred rows to show the first ten is
+/// what turned a slow query into a cancelled one.
+function pageSize() {
+  return 200;
 }
 
 /// Photos fetched on demand, kept so the 60s refresh doesn't discard them.
@@ -308,14 +341,33 @@ const photosById = {};
 window.showPhotos = async (id) => {
   const slot = document.getElementById(`shots-${id}`);
   if (slot) slot.innerHTML = `<p class="noshots">Loading…</p>`;
-  const { data, error } = await sb.from("verified_foods")
-    .select("photos_b64").eq("id", id).single();
+  // Whichever table this row came from — both carry photos_b64, and both now
+  // omit it from the list query.
+  const { data, error } = await sb.from(currentTab)
+    .select("photos_b64,label_photo_b64").eq("id", id).single();
   if (error) { if (slot) slot.innerHTML = `<p class="noshots">${esc(error.message)}</p>`; return; }
   photosById[id] = photosOf(data ?? {});
   render();
 };
 
+/// Increments on every load. A reply whose token is stale is discarded.
+///
+/// ── WHY THE ERROR APPEARED ON THE WRONG TAB ──
+/// `load()` awaited, then wrote to #content unconditionally. Corrections is
+/// the slow query — 110 rows, each with base64 photos — so switching away from
+/// it while it was still running meant its result (often a statement timeout)
+/// landed on whatever tab you had moved to. Hence "things load and then
+/// disappear to be replaced by this message", on a tab whose own query was
+/// fine.
+///
+/// Also covers the 60-second auto-refresh overlapping a manual tab change.
+let loadToken = 0;
+
 async function load() {
+  const token = ++loadToken;
+  const forTab = currentTab;
+  /// True when this reply is still the one being waited for.
+  const current = () => token === loadToken && forTab === currentTab;
   // AI candidates sort by CONFIDENCE, highest first. Scored against 27 real
   // decisions, ai_confidence turned out not to predict approval well enough
   // to auto-approve on (33-44% error at every threshold from 0.6 to 0.9) —
@@ -327,10 +379,12 @@ async function load() {
     ? q.order("ai_confidence", { ascending: false })
        .order("selection_count", { ascending: false })
     : q.order("created_at", { ascending: false });
-  const { data, error } = await q.limit(500);
+  const { data, error } = await q.limit(pageSize());
+  if (!current()) return;              // the user has moved on
   if (error) {
     document.getElementById("content").innerHTML =
-      `<div class="card"><h2>Couldn't load</h2><p class="sub">${esc(error.message)}</p></div>`;
+      `<div class="card"><h2>Couldn't load</h2><p class="sub">${esc(error.message)}</p>`
+      + `<p class="sub">Tab: ${esc(forTab)}</p></div>`;
     return;
   }
   rows = data ?? [];
@@ -338,6 +392,7 @@ async function load() {
   reachById = {};
   if (currentTab === "moderation_ai_candidates") {
     const { data: reach } = await sb.from("moderation_candidate_reach").select("*");
+    if (!current()) return;
     for (const r of reach ?? []) reachById[r.candidate_id] = r;
   }
 
@@ -377,10 +432,17 @@ function photosOf(r) {
 }
 
 function shotsHTML(r, expected) {
-  const p = photosOf(r);
+  // The list no longer carries photos for the heavy tabs; they load per row.
+  if (photosById[r.id] === undefined && !photosOf(r).length && expected) {
+    return `<div id="shots-${esc(r.id)}">`
+      + `<button class="csv" onclick="showPhotos('${esc(r.id)}')">`
+      + `📷 Label photo</button></div>`;
+  }
+  const p = photosById[r.id] ?? photosOf(r);
   if (!p.length) {
     return expected
-      ? `<p class="noshots">No photo attached — this one was typed in, not scanned.</p>`
+      ? `<div id="shots-${esc(r.id)}"><p class="noshots">No photo attached — `
+        + `this one was typed in, not scanned.</p></div>`
       : "";
   }
   return `<div class="shots">` + p.map((b64) =>
@@ -561,13 +623,22 @@ function cardHTML(r) {
     }
     case "verified_foods": {
       const trust = r.trust_level || "bronze";
+      // No panel behind these numbers: "estimate" (no published data either)
+      // or "reference" (published data, still not a transcription).
+      const estimated = r.verification_basis === "estimate"
+        || r.verification_basis === "reference";
       body = verifiedShotsHTML(r)
         + `<h2>${esc(titleOf(r))}</h2>`
         + `<div class="sub">${esc(r.brand || "no brand")}`
         + (r.barcode ? ` · ${esc(r.barcode)}` : "") + `</div>`
         + `<div><span class="badge">${esc(trust)}</span>`
         + `<span class="badge">confirmed ${r.verification_count ?? 1}×</span>`
-        + (r.verification_basis ? `<span class="badge">verified by ${esc(r.verification_basis)}</span>` : "")
+        + (estimated
+            ? `<span class="badge warn">nutrition not measured`
+              + ` · ${esc(r.verification_basis)}</span>`
+            : r.verification_basis
+              ? `<span class="badge">verified by ${esc(r.verification_basis)}</span>`
+              : "")
         + (r.flagged_for_review ? `<span class="badge bad">conflict flagged</span>` : "")
         // ── A NAME THAT CLASSIFIES INSTEAD OF NAMING ──
         // "muffin" for an English muffin. The numbers on these rows are
@@ -578,6 +649,15 @@ function cardHTML(r) {
         // clears it without anyone doing anything.
         + (r.name_review ? `<span class="badge bad">name needs review</span>` : "")
         + `</div>`
+        + (estimated
+            ? `<div class="basis"><strong>These numbers were never read off a
+                 panel.</strong> The barcode proves what the product is; the
+                 nutrition is ${r.verification_basis === "reference"
+                   ? "a reference value for the generic food"
+                   : "a category estimate — no published data exists for it"}.
+                 Users cannot edit these; you can. A photographed panel will
+                 replace them outright.</div>`
+            : "")
         + (r.name_review
             ? `<div class="basis"><strong>This name is a category, not a product.</strong>
                  Nutrition is trusted; the name is not, so the row stays bronze
@@ -604,11 +684,25 @@ function cardHTML(r) {
         + field(r, "Brand", "brand", r.brand)
         + field(r, "Serving", "serving_size_g", fmt(r.serving_size_g))
         + field(r, "Barcode", null, r.barcode || "—")
-        + field(r, "Calories", null, fmt(r.calories) || "—")
-        + field(r, "Protein g", null, fmt(r.protein_g) || "—")
-        + field(r, "Carbs g", null, fmt(r.carbs_g) || "—")
-        + field(r, "Fat g", null, fmt(r.fat_g) || "—")
-        + field(r, "Fibre g", null, fmt(r.fibre_g) || "—")
+        // ── THE MODERATOR IS THE EXCEPTION ──
+        // Nutrition is read-only on a TRANSCRIBED row: those numbers came off
+        // a photographed panel through a flow that exists so they are never
+        // typed by hand.
+        //
+        // An ESTIMATE has no panel behind it. Nobody measured it, so there is
+        // nothing to protect — and the moderator is the one person who can go
+        // and read the actual pack. Locked to users, open to you.
+        + (estimated
+            ? field(r, "Calories", "calories", fmt(r.calories))
+              + field(r, "Protein g", "protein_g", fmt(r.protein_g))
+              + field(r, "Carbs g", "carbs_g", fmt(r.carbs_g))
+              + field(r, "Fat g", "fat_g", fmt(r.fat_g))
+              + field(r, "Fibre g", "fibre_g", fmt(r.fibre_g))
+            : field(r, "Calories", null, fmt(r.calories) || "—")
+              + field(r, "Protein g", null, fmt(r.protein_g) || "—")
+              + field(r, "Carbs g", null, fmt(r.carbs_g) || "—")
+              + field(r, "Fat g", null, fmt(r.fat_g) || "—")
+              + field(r, "Fibre g", null, fmt(r.fibre_g) || "—"))
         + `</div>`
         + (r.conflict_note ? `<p class="note">${esc(r.conflict_note)}</p>` : "")
         + `<div class="acts">`
