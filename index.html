@@ -106,6 +106,10 @@
   .badge.bad  { background:#5a1d1d; color:#ffb4b4; }
   .status-pending  { color:var(--amber); }
   .status-approved { color:#81c784; }
+  /* A purged deletion request. Without this the badge rendered unstyled,
+     which read as "something went wrong" for the one status that means the
+     opposite. */
+  .status-done     { color:#81c784; }
   .status-rejected { color:#e57373; }
 
   #login { max-width:340px; margin:100px auto; background:var(--card);
@@ -311,9 +315,19 @@ const VERIFIED_LIST_COLUMNS = [
 /// the tab whose whole job is checking numbers against a panel — but the tab
 /// was timing out, and a photo you have to tap for beats a page that won't
 /// load.
+/// ── "fibre" IS NOT A COLUMN HERE, AND NEVER WAS ──
+/// This list asked for one, PostgREST rejected the whole select, and the
+/// Corrections tab showed "Couldn't load — column
+/// moderation_submissions.fibre does not exist". One wrong name took the
+/// entire tab down, because a select is all-or-nothing.
+///
+/// The name was borrowed from moderation_ai_candidates, which DOES have a
+/// fibre column. Submissions carry fibre inside `extras` alongside sugar
+/// and saturated fat — see ModerationSyncService, which has never sent a
+/// top-level fibre for this table.
 const SUBMISSION_LIST_COLUMNS = [
   "id", "barcode", "food_name", "brand", "kind", "country", "status",
-  "calories", "protein", "carbs", "fat", "fibre", "serving_size",
+  "calories", "protein", "carbs", "fat", "serving_size",
   "extras", "created_at",
 ].join(",");
 
@@ -549,14 +563,39 @@ function macroFields(r, f) {
   const prot = r.protein !== undefined ? "protein" : "protein_g";
   const carb = r.carbs   !== undefined ? "carbs"   : "carbs_g";
   const fat  = r.fat     !== undefined ? "fat"     : "fat_g";
-  const fib  = r.fibre   !== undefined ? "fibre"   : "fibre_g";
+  const fib  = r.fibre   !== undefined ? "fibre"
+             : r.fibre_g !== undefined ? "fibre_g" : null;
+  // A submission's fibre lives in `extras`, not in a column of its own. It
+  // is shown read-only: `field` writes back to the column it is given, and
+  // there is no column — editing it would have to patch one key inside a
+  // jsonb blob, which is a different save path than this one.
+  const extrasFibre = fib === null ? num(r.extras?.fibre_g) : null;
   return [
     field(r, "Calories", cals ?? "calories", scale(r[cals ?? "calories"]), { factor:f }),
     field(r, "Protein g", prot, scale(r[prot]), { factor:f }),
     field(r, "Carbs g",   carb, scale(r[carb]), { factor:f }),
     field(r, "Fat g",     fat,  scale(r[fat]),  { factor:f }),
-    field(r, "Fibre g",   fib,  scale(r[fib]),  { factor:f }),
+    fib === null
+      ? field(r, "Fibre g", null, extrasFibre === null ? "" : scale(extrasFibre))
+      : field(r, "Fibre g", fib, scale(r[fib]), { factor:f }),
   ].join("");
+}
+
+/// Everything in the row's `micros` blob, editable.
+///
+/// Written back through the same save path as the macros: `data-col` carries
+/// `micros.<id>`, and `saveRow` folds those into one jsonb patch so a single
+/// key can be corrected without rewriting the whole object.
+function microsHTML(r) {
+  const m = r.micros && typeof r.micros === "object" ? r.micros : {};
+  const ids = Object.keys(m).sort();
+  if (!ids.length) {
+    return `<p class="note">No micronutrients recorded on this row.</p>`;
+  }
+  return `<div class="fields">`
+    + ids.map((id) =>
+        field(r, id, `micros.${id}`, fmt(m[id]))).join("")
+    + `</div>`;
 }
 
 function actionsHTML(r) {
@@ -684,26 +723,35 @@ function cardHTML(r) {
         + field(r, "Brand", "brand", r.brand)
         + field(r, "Serving", "serving_size_g", fmt(r.serving_size_g))
         + field(r, "Barcode", null, r.barcode || "—")
-        // ── THE MODERATOR IS THE EXCEPTION ──
-        // Nutrition is read-only on a TRANSCRIBED row: those numbers came off
-        // a photographed panel through a flow that exists so they are never
-        // typed by hand.
+        // ── THE MODERATOR IS THE EXCEPTION, ON EVERY ROW ──
+        // Nutrition used to be read-only on a TRANSCRIBED row, on the
+        // reasoning that those numbers came off a photographed panel through
+        // a flow built so they are never typed by hand. Estimates were open
+        // because nobody measured them.
         //
-        // An ESTIMATE has no panel behind it. Nobody measured it, so there is
-        // nothing to protect — and the moderator is the one person who can go
-        // and read the actual pack. Locked to users, open to you.
-        + (estimated
-            ? field(r, "Calories", "calories", fmt(r.calories))
-              + field(r, "Protein g", "protein_g", fmt(r.protein_g))
-              + field(r, "Carbs g", "carbs_g", fmt(r.carbs_g))
-              + field(r, "Fat g", "fat_g", fmt(r.fat_g))
-              + field(r, "Fibre g", "fibre_g", fmt(r.fibre_g))
-            : field(r, "Calories", null, fmt(r.calories) || "—")
-              + field(r, "Protein g", null, fmt(r.protein_g) || "—")
-              + field(r, "Carbs g", null, fmt(r.carbs_g) || "—")
-              + field(r, "Fat g", null, fmt(r.fat_g) || "—")
-              + field(r, "Fibre g", null, fmt(r.fibre_g) || "—"))
+        // That reasoning protects the wrong thing. The transcription flow can
+        // and does get it wrong — a Warrior RAGE tub verified by barcode with
+        // 0 across every macro, a Birds Eye pack with carbohydrate reading
+        // protein's number — and when it does, the moderator is the ONE
+        // person holding the actual packet. Locking the fields did not make
+        // the numbers right; it made a wrong row unfixable, so the only
+        // remedy left was deleting a correctly identified product.
+        //
+        // Users still never type these. The lock that matters is the one in
+        // the app.
+        + field(r, "Calories", "calories", fmt(r.calories))
+        + field(r, "Protein g", "protein_g", fmt(r.protein_g))
+        + field(r, "Carbs g", "carbs_g", fmt(r.carbs_g))
+        + field(r, "Fat g", "fat_g", fmt(r.fat_g))
+        + field(r, "Fibre g", "fibre_g", fmt(r.fibre_g))
         + `</div>`
+        // ── AND WHAT THE ROW CARRIES BESIDES THE MACROS ──
+        // `micros` holds everything else the read captured — sodium, sugar,
+        // saturated fat, caffeine, the vitamins, and now taurine and guarana.
+        // None of it was shown, so a moderator judging a row could see five
+        // numbers out of twenty and had no way to tell a complete record from
+        // a threadbare one.
+        + microsHTML(r)
         + (r.conflict_note ? `<p class="note">${esc(r.conflict_note)}</p>` : "")
         + `<div class="acts">`
         + `<button class="ok" style="flex:1 !important" `
@@ -956,10 +1004,25 @@ window.setStatus = async (id, status) => {
 /// correction queues nothing here is divided by a per-100 g factor.
 window.saveRow = async (id) => {
   const patch = {};
+  // Micronutrient edits arrive as `micros.<id>` and have to be folded into
+  // ONE jsonb object — patching `micros` twice in the same update would send
+  // the second write only. Collected here, merged onto the row's existing
+  // blob below, so correcting one key never drops the others.
+  const microEdits = {};
   document.querySelectorAll(`input[data-id="${CSS.escape(String(id))}"]`).forEach((i) => {
     const col = i.dataset.col;
     const raw = i.value.trim();
     if (raw === (i.dataset.orig ?? "")) return;   // untouched
+    if (col.startsWith("micros.")) {
+      const key = col.slice("micros.".length);
+      // Blank means "this row doesn't carry that nutrient", which is a
+      // deletion from the blob rather than a zero — a stored 0 would claim
+      // the label declared none.
+      if (raw === "") { microEdits[key] = null; return; }
+      const n = Number(raw);
+      if (!Number.isNaN(n)) microEdits[key] = n;
+      return;
+    }
     if (raw === "") {
       if (numericCols.has(col)) patch[col] = null;
       return;
@@ -968,6 +1031,15 @@ window.saveRow = async (id) => {
     const n = Number(raw);
     if (!Number.isNaN(n)) patch[col] = n;
   });
+  if (Object.keys(microEdits).length) {
+    const row = rows.find((r) => String(r.id) === String(id));
+    const merged = { ...(row && row.micros ? row.micros : {}) };
+    for (const [k, v] of Object.entries(microEdits)) {
+      if (v === null || !(v > 0)) delete merged[k];
+      else merged[k] = v;
+    }
+    patch.micros = merged;
+  }
   if (!Object.keys(patch).length) { alert("Nothing changed."); return; }
   // Renaming a flagged row IS the fix, so clear the flag in the same write.
   // Leaving it set would send the moderator back to a row they had already

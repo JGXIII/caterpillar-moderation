@@ -112,7 +112,16 @@ calls.length = 0;
 await win.bulkDelete();
 ok(calls[0][0] === "delete" && calls[0][1].length === 2, "bulk delete sends both ids");
 
-// 7. A card renders a checkbox, and verified_foods locks the numbers.
+// 7. A card renders a checkbox, and the moderator can fix the numbers.
+//
+// ── THIS CHECK USED TO ASSERT THE OPPOSITE ──
+// Nutrition was locked on verified rows, on the reasoning that the numbers
+// came off a photographed panel and should never be typed. That protects the
+// wrong thing: the transcription flow does get it wrong — a pre-workout
+// verified by barcode with 0 across every macro — and the lock did not make
+// those numbers right, it made a correctly identified product unfixable, so
+// the only remedy was deleting it. Users still never type these; the lock
+// that matters is the one in the app.
 mod.setTab("verified_foods");
 const card = mod.cardHTML({ id: "v1", product_name: "Thing", brand: "B",
                             serving_size_g: 30, calories: 100, protein_g: 2 });
@@ -120,8 +129,8 @@ ok(card.includes('class="pick"'), "card has a select checkbox");
 ok(card.includes('data-col="product_name"'), "product name editable");
 ok(card.includes('data-col="brand"'), "brand editable");
 ok(card.includes('data-col="serving_size_g"'), "serving editable");
-ok(!card.includes('data-col="calories"'), "calories NOT editable");
-ok(!card.includes('data-col="protein_g"'), "protein NOT editable");
+ok(card.includes('data-col="calories"'), "calories editable by moderator");
+ok(card.includes('data-col="protein_g"'), "protein editable by moderator");
 ok(!card.includes('data-col="barcode"'), "barcode NOT editable");
 
 // 8. The list query must not drag photos across the wire.

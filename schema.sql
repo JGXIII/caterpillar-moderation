@@ -259,9 +259,15 @@ create policy moderator_all_deletions on account_deletion_requests
 -- Private bucket; each user's photos live under their own folder
 -- (meal-photos/{user_id}/{filename}) and the policy below hard-enforces
 -- that a user can only ever touch their own folder — not just "logged in",
--- but specifically THEIR uid. This is a deliberate no-op for real users
--- right now: isPro has no StoreKit behind it yet, so nobody uploads
--- anything until that ships (see project memory "Still needs").
+-- but specifically THEIR uid.
+--
+-- ── THE COMPARISON IS CASE-INSENSITIVE, DELIBERATELY ──
+-- Swift's UUID.uuidString is uppercase; auth.uid()::text is lowercase; the
+-- path segment is TEXT. Matching them case-sensitively rejected every upload
+-- any Pro user ever made, with a 403 that only appeared in DEBUG builds.
+-- See migration 20260827000000_meal_photos_case_insensitive_owner.sql for
+-- the full account. Still pinned to exactly one uid — case is the only thing
+-- relaxed.
 insert into storage.buckets (id, name, public)
 values ('meal-photos', 'meal-photos', false)
 on conflict (id) do nothing;
@@ -270,9 +276,9 @@ create policy meal_photos_owner_all on storage.objects
   for all to authenticated
   using (
     bucket_id = 'meal-photos'
-    and (storage.foldername(name))[1] = (select auth.uid()::text)
+    and lower((storage.foldername(name))[1]) = (select auth.uid()::text)
   )
   with check (
     bucket_id = 'meal-photos'
-    and (storage.foldername(name))[1] = (select auth.uid()::text)
+    and lower((storage.foldername(name))[1]) = (select auth.uid()::text)
   );
