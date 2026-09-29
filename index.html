@@ -915,6 +915,20 @@ window.bulk = async (status) => {
   const { error } = await sb.from(currentTab)
     .update({ [statusCol]: status }).in("id", ids);
   if (error) { alert(error.message); return; }
+  if (currentTab === "moderation_submissions" && status === "approved") {
+    const failures = [];
+    for (const id of ids) {
+      const problem = await promote(id);
+      if (problem) {
+        const r = rows.find((x) => String(x.id) === String(id));
+        failures.push(`${r ? r.food_name : id}: ${problem}`);
+      }
+    }
+    if (failures.length) {
+      alert(`Approved ${ids.length}, but ${failures.length} were NOT added `
+            + `to the shared database:\n\n${failures.join("\n")}`);
+    }
+  }
   selected.clear();
   load();
 };
@@ -965,6 +979,27 @@ function reachCell(r) {
 }
 
 // ── writes ────────────────────────────────────────────────────────────────
+
+/// Put an approved correction into the shared database.
+///
+/// ── APPROVE USED TO STOP AT THE STATUS COLUMN ──
+/// Approving a correction set `status = 'approved'` and nothing else, so no
+/// approved correction ever reached verified_foods — 35 of them by 29 Sep.
+/// The verified-foods function's `promote` task does the copy; it checks this
+/// session belongs to the moderator, because the table takes no client writes.
+///
+/// Returns a line to show when it could not promote, or null on success.
+async function promote(id) {
+  const { data, error } = await sb.functions.invoke("verified-foods", {
+    body: { task: "promote", submissionId: id },
+  });
+  if (error) return `couldn't reach the database: ${error.message}`;
+  if (!data || data.promoted !== true) {
+    return data && data.reason ? data.reason : "not promoted";
+  }
+  return null;
+}
+
 window.setStatus = async (id, status) => {
   const row = rows.find((r) => String(r.id) === String(id));
   // Undo the display conversion: what's on screen may be per-serving, but
@@ -993,7 +1028,15 @@ window.setStatus = async (id, status) => {
     ? "approval_status" : "status";
   patch[statusCol] = status;
   const { error } = await sb.from(currentTab).update(patch).eq("id", id);
-  if (error) alert(error.message); else load();
+  if (error) { alert(error.message); return; }
+  // Edits above are saved first, so what gets promoted is what's on screen.
+  if (currentTab === "moderation_submissions" && status === "approved") {
+    const problem = await promote(id);
+    if (problem) {
+      alert(`Approved, but NOT added to the shared database:\n${problem}`);
+    }
+  }
+  load();
 };
 
 /// Save edits with no status change.
