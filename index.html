@@ -156,6 +156,31 @@
                    border-radius:8px; padding:6px 11px; cursor:pointer;
                    font-size:13px; }
 
+  /* To review / Done / All */
+  .viewseg { display:inline-flex; border:1px solid #345; border-radius:9px;
+             overflow:hidden; }
+  .viewseg button { background:none; border:none; color:#bbb; padding:6px 12px;
+                    font-size:13px; cursor:pointer; border-radius:0; }
+  .viewseg button.on { background:var(--green); color:#fff; font-weight:600; }
+
+  /* Settled rows: one line each, so a long history stays scannable. */
+  .rows { background:var(--card); border:1px solid var(--line);
+          border-radius:var(--radius); margin-bottom:14px; overflow:hidden; }
+  .row { display:flex; align-items:center; gap:8px 10px; flex-wrap:wrap;
+         padding:9px 12px; border-top:1px solid var(--line); }
+  .row:first-child { border-top:none; }
+  .rmain { flex:1 1 180px; min-width:0; }
+  .rname { font-weight:600; font-size:14px; overflow:hidden;
+           text-overflow:ellipsis; white-space:nowrap; }
+  .rsub { color:var(--dim); font-size:12px; overflow:hidden;
+          text-overflow:ellipsis; white-space:nowrap; }
+  .rnum { font-size:12.5px; color:#cfd8d0; white-space:nowrap;
+          font-variant-numeric:tabular-nums; }
+  .row .badge { margin:0; }
+  .ropen { background:none; border:1px solid #345; color:var(--green-lt);
+           border-radius:8px; padding:5px 10px; font-size:12.5px; cursor:pointer; }
+  .closecard { float:right; margin:-2px 30px 6px 0; }
+
   /* Full-size photo viewer */
   #lightbox { position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:50;
               display:none; align-items:center; justify-content:center;
@@ -203,6 +228,48 @@ const TABS = [
 
 let currentTab = TABS[0].id;
 let rows = [];
+
+/// What each tab shows: "todo" (waiting on you), "done" (approved, rejected,
+/// or a verified row with nothing flagged) or "all". To review is the
+/// default, so a decision makes the card disappear.
+const viewByTab = {};
+const viewOf = () => viewByTab[currentTab] ?? "todo";
+/// Settled rows opened back up into a full card.
+const expanded = new Set();
+
+/// The table's status column, or null for verified_foods, which has none.
+function statusColumn(tab = currentTab) {
+  if (tab === "verified_foods") return null;
+  return tab === "moderation_ai_candidates" ? "approval_status" : "status";
+}
+const statusOf = (r) => r.approval_status ?? r.status ?? "pending";
+const needsReview = (r) => currentTab === "verified_foods"
+  ? Boolean(r.flagged_for_review || r.name_review)
+  : statusOf(r) === "pending";
+
+/// Narrow a query to one view. Done server-side so a pending row can never
+/// fall outside the page of rows that was fetched.
+function applyView(q, view, tab = currentTab) {
+  const col = statusColumn(tab);
+  if (view === "all") return q;
+  if (col) {
+    return view === "todo"
+      ? q.or(`${col}.is.null,${col}.eq.pending`)
+      : q.not(col, "is", null).neq(col, "pending");
+  }
+  return view === "todo"
+    ? q.or("flagged_for_review.eq.true,name_review.eq.true")
+    : q.not("flagged_for_review", "is", true).not("name_review", "is", true);
+}
+
+window.setView = (v) => {
+  viewByTab[currentTab] = v;
+  selected.clear();
+  expanded.clear();
+  load();
+};
+window.expand = (id) => { expanded.add(String(id)); render(); };
+window.collapse = (id) => { expanded.delete(String(id)); render(); };
 let reachById = {};
 // Per-card display basis: "100" (as stored) or "serving". Keyed by row id so
 // flipping one card doesn't disturb the others.
@@ -229,6 +296,7 @@ function buildTabs() {
       // bulk delete at rows that aren't there — silently doing nothing, or
       // worse, matching something unrelated.
       selected.clear();
+      expanded.clear();
       buildTabs();
       load();
     }));
@@ -245,13 +313,13 @@ async function showApp() {
   setInterval(refreshCounts, 5 * 60 * 1000);
 }
 
-// Pending counts on the tabs, so you can see where the work is without
+// What's waiting on each tab, so you can see where the work is without
 // opening every tab to find out it's empty.
 async function refreshCounts() {
   for (const t of TABS) {
     try {
-      const { count } = await sb.from(t.id)
-        .select("id", { count: "exact", head: true });
+      const { count } = await applyView(
+        sb.from(t.id).select("id", { count: "exact", head: true }), "todo", t.id);
       const el = document.getElementById(`count-${t.id}`);
       if (el) el.textContent = count ? ` ${count}` : "";
     } catch { /* a missing table just shows no count */ }
@@ -388,7 +456,7 @@ async function load() {
   // but it is still the best available ordering, so review time goes to the
   // most likely keepers first. selection_count breaks ties: a candidate a
   // user actually picked is the strongest signal there is.
-  let q = sb.from(currentTab).select(listColumns());
+  let q = applyView(sb.from(currentTab).select(listColumns()), viewOf());
   q = currentTab === "moderation_ai_candidates"
     ? q.order("ai_confidence", { ascending: false })
        .order("selection_count", { ascending: false })
@@ -402,6 +470,8 @@ async function load() {
     return;
   }
   rows = data ?? [];
+  // Waiting rows first, whatever the view.
+  rows.sort((a, b) => Number(needsReview(b)) - Number(needsReview(a)));
 
   reachById = {};
   if (currentTab === "moderation_ai_candidates") {
@@ -550,7 +620,7 @@ function displayFactor(r) {
 function titleOf(r) {
   const name = r.food_name || r.name || r.product_name || r.email
     || r.barcode || "(unnamed)";
-  return r.flavour ? `${name} — ${r.flavour}` : name;
+  return r.flavour ? `${name}, ${r.flavour}` : name;
 }
 
 function macroFields(r, f) {
@@ -780,11 +850,41 @@ function cardHTML(r) {
     }
   }
   const picked = selected.has(String(r.id));
+  const reopened = expanded.has(String(r.id))
+    ? `<button class="csv closecard" onclick="collapse('${esc(r.id)}')">Close</button>`
+    : "";
   return `<div class="card${picked ? " picked" : ""}" data-row="${esc(r.id)}">`
     + `<input type="checkbox" class="pick" ${picked ? "checked" : ""} `
     + `onchange="togglePick('${esc(r.id)}')" `
     + `aria-label="Select this row">`
-    + `${body}</div>`;
+    + `${reopened}${body}</div>`;
+}
+
+/// A settled row on one line: name, numbers, status. Open turns it back into
+/// the full card for an edit.
+function compactRowHTML(r) {
+  const kcal = num(r.calories);
+  const p = num(r.protein ?? r.protein_g);
+  const c = num(r.carbs ?? r.carbs_g);
+  const fat = num(r.fat ?? r.fat_g);
+  const numbers = kcal === null ? ""
+    : `${fmt(kcal, 0)} kcal · ${fmt(p)}P ${fmt(c)}C ${fmt(fat)}F`;
+  let extra = "";
+  if (currentTab === "moderation_ai_candidates" && statusOf(r) === "approved") {
+    extra = ` · reach ${reachCell(r)}`;
+  } else if (currentTab === "verified_foods") {
+    extra = ` · ${esc(r.trust_level || "bronze")} · confirmed ${r.verification_count ?? 1}×`;
+  } else if (currentTab === "moderation_food_requests") {
+    extra = ` · asked ${r.request_count ?? 1}×`;
+  }
+  const sub = [r.brand, r.barcode].filter(Boolean).map(esc).join(" · ");
+  return `<div class="row">`
+    + `<div class="rmain"><div class="rname">${esc(titleOf(r))}</div>`
+    + `<div class="rsub">${sub}${extra}</div></div>`
+    + (numbers ? `<div class="rnum">${numbers}</div>` : "")
+    + (currentTab === "verified_foods" ? "" : statusBadge(r))
+    + `<button class="ropen" onclick="expand('${esc(r.id)}')">Open</button>`
+    + `</div>`;
 }
 
 /// Fibre/sugar/sat fat/sodium the user typed into a correction, stored in a
@@ -799,15 +899,17 @@ function extrasFields(r, f) {
 function render() {
   const el = document.getElementById("content");
   if (!rows.length) {
-    el.innerHTML = currentTab === "verified_foods"
-      ? `<p class="empty">No verified foods yet — they appear as users scan nutrition labels.</p>`
-      : `<p class="empty">Nothing pending — go touch grass 🌿</p>`;
+    const view = viewOf();
+    el.innerHTML = selectBarHTML([])
+      + `<p class="empty">${view === "todo"
+          ? "Nothing to review. All caught up."
+          : view === "done" ? "Nothing settled here yet." : "Nothing here yet."}</p>`;
     permissionsLookBroken().then((broken) => {
       if (!broken || rows.length) return;
       el.innerHTML =
         `<div class="card" style="background:#5a1d1d;border-color:#ff8a80;color:#ffcdd2">
          <h2>This dashboard cannot read the database.</h2>
-         <p>The tables are NOT empty — an anonymous client can see rows your
+         <p>The tables are NOT empty: an anonymous client can see rows your
          signed-in session cannot. The row-level security policies for the
          <code>authenticated</code> role are missing or wrong.</p>
          <p>A blocked SELECT returns an empty result rather than an error,
@@ -818,14 +920,22 @@ function render() {
     });
     return;
   }
-  // Rows no longer needing attention are hidden rather than deleted — see
-  // `visibleRows`.
-  const shown = visibleRows();
-  const hidden = rows.length - shown.length;
-  el.innerHTML = selectBarHTML(shown, hidden)
-    + shown.map(cardHTML).join("")
+  // Waiting rows are full cards with Approve and Reject; settled rows are
+  // one line each until opened.
+  const todo = rows.filter(needsReview);
+  const settled = rows.filter((r) => !needsReview(r));
+  el.innerHTML = selectBarHTML(rows)
+    + todo.map(cardHTML).join("")
+    + (settled.length
+        ? `<div class="rows">` + settled.map((r) =>
+            expanded.has(String(r.id))
+              ? `</div>${cardHTML(r)}<div class="rows">`
+              : compactRowHTML(r)).join("") + `</div>`
+        : "")
     + tabNote()
     + bulkBarHTML();
+  // An opened card splits the table; drop any empty pieces it leaves behind.
+  el.querySelectorAll(".rows:empty").forEach((n) => n.remove());
 }
 
 // ── multi-select ──────────────────────────────────────────────────────────
@@ -833,44 +943,27 @@ function render() {
 // and these arrive in the hundreds.
 const selected = new Set();
 
-/// Which rows this tab currently shows.
+/// Which rows this tab currently shows: all of them. The view filter runs in
+/// the query (see `applyView`), so nothing here hides a row after the fact.
 ///
-/// ── WHY FULLY-REACHED CANDIDATES ARE HIDDEN, NOT DELETED ──
-/// An approved AI candidate that has reached every active device looks
-/// finished, and it is — but the ROW is still doing a job. `pullApprovals`
-/// re-reads every non-pending candidate on each sync with no "since" filter
-/// and copies it into that device's local index. The table is the source a
-/// device pulls FROM, not a delivery receipt.
-///
-/// "100%" also means 100% of devices seen in the last SEVEN DAYS, which is
-/// what `moderation_candidate_reach` counts. It does not include a phone
-/// that's been off for a fortnight, and it cannot include an install that
-/// doesn't exist yet — every future user gets this food by pulling this row.
-/// Delete it and it is gone for all of them.
-///
-/// So the queue hides them and the data stays.
-function visibleRows() {
-  if (currentTab !== "moderation_ai_candidates" || !hideSettled) return rows;
-  return rows.filter((r) => {
-    if (r.approval_status !== "approved") return true;
-    const s = reachById[r.id];
-    return !(s && s.active_devices > 0 && s.reached_devices >= s.active_devices);
-  });
-}
-let hideSettled = true;
+/// Approved AI candidates are never deleted to tidy the queue, even when every
+/// device has them: each sync re-reads the whole approved set, so the row is
+/// where a phone that's been off for a fortnight, and every future install,
+/// gets the food from. "Done" is where they live.
+function visibleRows() { return rows; }
 
-window.toggleSettled = () => { hideSettled = !hideSettled; render(); };
-
-function selectBarHTML(shown, hidden) {
-  const all = shown.length && shown.every((r) => selected.has(String(r.id)));
-  return `<div class="selbar">`
+function selectBarHTML(shown) {
+  const view = viewOf();
+  const seg = `<span class="viewseg">`
+    + [["todo", "To review"], ["done", "Done"], ["all", "All"]].map(([v, label]) =>
+        `<button class="${view === v ? "on" : ""}" onclick="setView('${v}')">${label}</button>`)
+        .join("")
+    + `</span>`;
+  if (!shown.length) return `<div class="selbar">${seg}</div>`;
+  const all = shown.every((r) => selected.has(String(r.id)));
+  return `<div class="selbar">${seg}`
     + `<button onclick="selectAll(${all ? "false" : "true"})">`
     + `${all ? "Clear selection" : `Select all ${shown.length}`}</button>`
-    + (currentTab === "moderation_ai_candidates"
-        ? `<button onclick="toggleSettled()">`
-          + `${hideSettled ? "Show" : "Hide"} fully-reached</button>`
-          + (hidden ? `<span>${hidden} settled and hidden</span>` : "")
-        : "")
     + `</div>`;
 }
 
@@ -931,6 +1024,7 @@ window.bulk = async (status) => {
   }
   selected.clear();
   load();
+  refreshCounts();
 };
 
 window.bulkDelete = async () => {
@@ -946,28 +1040,20 @@ window.bulkDelete = async () => {
 
 function tabNote() {
   if (currentTab === "moderation_ai_candidates") {
-    return `<p class="note">Sorted by confidence, highest first — but
-      confidence predicts approval poorly (33–44% error at every threshold
-      tested), so it orders your time rather than deciding anything.<br><br>
-      <strong>Reach</strong> = devices seen in the last <strong>7 days</strong>
-      that have pulled this approval. 100% does <strong>not</strong> mean the
-      row is finished with: every sync re-reads the whole approved set, so this
-      row is what a phone that's been off for a fortnight — and every install
-      that doesn't exist yet — will pull the food from. Deleting it takes the
-      food away from all of them. Fully-reached rows are hidden from this queue
-      instead, which is what "settled" means above.</p>`;
+    return `<p class="note">Sorted by confidence, highest first. It orders your
+      time; it doesn't predict approval well enough to decide anything.
+      <strong>Reach</strong> is how many devices seen in the last 7 days have
+      pulled an approval. Don't delete approved rows: future installs pull the
+      food from them.</p>`;
   }
   if (currentTab === "verified_foods") {
-    return `<p class="note">These are the app's highest-trust records — a
-      barcode scan believes this table over every other source. You can correct
-      the <strong>name, brand and serving size</strong>: the things a
-      crowd-sourced database gets wrong and a label photo can't capture. The
-      nutrition is read-only on purpose — it came off a photographed label
-      through the verified-read flow, which exists so those numbers are never
-      typed by hand. If they're wrong, the record is wrong: 🗑 it and the next
-      scan of that barcode re-verifies from the label.</p>`;
+    return `<p class="note">The app's highest-trust records: a barcode scan
+      believes this table over every other source. To review shows rows flagged
+      for a conflict or a name that needs fixing. Users can never type these
+      numbers; you can. If a record is simply wrong, 🗑 it and the next scan
+      re-verifies from the label.</p>`;
   }
-  return `<p class="note">Edit any field, then approve — edits save with the
+  return `<p class="note">Edit any field, then approve. Edits save with the
     approval and flow back into Caterpillar. 🗑 removes a row permanently.</p>`;
 }
 
@@ -1036,7 +1122,9 @@ window.setStatus = async (id, status) => {
       alert(`Approved, but NOT added to the shared database:\n${problem}`);
     }
   }
+  expanded.delete(String(id));
   load();
+  refreshCounts();
 };
 
 /// Save edits with no status change.
