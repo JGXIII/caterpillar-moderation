@@ -82,6 +82,9 @@
   .f input { width:100%; background:none; border:none; color:#fff;
              font-size:16px; font-weight:600; padding:0; min-width:0; }
   .f input:focus { outline:none; }
+  .f select { width:100%; background:none; border:none; color:#fff;
+              font-size:16px; font-weight:600; padding:0; }
+  .f select option { color:#000; }
   .f .ro { font-size:15px; font-weight:600; overflow-wrap:anywhere; }
   .f.full { grid-column:1/-1; }
 
@@ -366,7 +369,7 @@ const VERIFIED_LIST_COLUMNS = [
   "id", "barcode", "brand", "product_name", "flavour", "serving_size_g",
   "calories", "protein_g", "carbs_g", "fat_g", "fibre_g", "source",
   "confidence", "verification_count", "trust_level", "flagged_for_review",
-  "verification_basis", "name_review", "conflict_note",
+  "verification_basis", "name_review", "conflict_note", "is_liquid",
   "created_at", "updated_at",
 ].join(",");
 
@@ -559,6 +562,19 @@ window.zoom = (src) => {
   document.getElementById("lightboxImg").src = src;
   document.getElementById("lightbox").style.display = "flex";
 };
+
+/// Drink or food: whether the panel is per mL or per g. The app logs a row
+/// marked "mL" as a drink (volume, hydration) whatever its name says, so this
+/// is how a soft drink named only for its flavour ("Zero Sugar Lime") gets
+/// fixed for everyone. "Not set" leaves it to the app's own reading.
+function measuredInField(r) {
+  const cur = r.is_liquid === true ? "ml" : r.is_liquid === false ? "g" : "";
+  const opt = (v, label) => `<option value="${v}"${v === cur ? " selected" : ""}>${label}</option>`;
+  return `<div class="f"><label>Measured in</label>`
+    + `<select data-id="${esc(r.id)}" data-col="is_liquid" data-orig="${cur}">`
+    + opt("", "Not set") + opt("g", "g (food)") + opt("ml", "mL (drink)")
+    + `</select></div>`;
+}
 
 /// One labelled field. `col` makes it editable; omit it for read-only.
 function field(r, label, col, value, opts = {}) {
@@ -793,6 +809,7 @@ function cardHTML(r) {
         + field(r, "Brand", "brand", r.brand)
         + field(r, "Serving", "serving_size_g", fmt(r.serving_size_g))
         + field(r, "Barcode", null, r.barcode || "—")
+        + measuredInField(r)
         // ── THE MODERATOR IS THE EXCEPTION, ON EVERY ROW ──
         // Nutrition used to be read-only on a TRANSCRIBED row, on the
         // reasoning that those numbers came off a photographed panel through
@@ -1140,6 +1157,10 @@ window.saveRow = async (id) => {
   // the second write only. Collected here, merged onto the row's existing
   // blob below, so correcting one key never drops the others.
   const microEdits = {};
+  document.querySelectorAll(`select[data-id="${CSS.escape(String(id))}"]`).forEach((sel) => {
+    if (sel.dataset.col !== "is_liquid" || sel.value === (sel.dataset.orig ?? "")) return;
+    patch.is_liquid = sel.value === "ml" ? true : sel.value === "g" ? false : null;
+  });
   document.querySelectorAll(`input[data-id="${CSS.escape(String(id))}"]`).forEach((i) => {
     const col = i.dataset.col;
     const raw = i.value.trim();
